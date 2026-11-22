@@ -1,21 +1,29 @@
-if getgenv().KSFUSac and getgenv().KSFUSac.destroy then pcall(getgenv().KSFUSac.destroy) end
+for _, k in ipairs({ "Y7Hub", "KSFU", "KSFUSac" }) do
+    local h = getgenv()[k]
+    if h and h.destroy then pcall(h.destroy) end
+end
+
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
 local LP = Players.LocalPlayer
+
 local S = {
     enabled = false,
-    sword = "APOTHESIS",
-    scale = 200, width = 100, length = 500,
-    killed = false, entering = false, busy = false,
+    sword = "CURSE",
+    armed = false,
+    busy = false,
+    autoMine = false,
+    mineAstral = false,
     startKills = 0,
 }
-local conns = {}
-local function on(sig, fn) table.insert(conns, sig:Connect(fn)) end
-local function char()
-    local c = LP.Character
-    return c, c and c:FindFirstChildOfClass("Humanoid"), c and c:FindFirstChild("HumanoidRootPart")
-end
+
+local miningChar = nil
+local lastMineActivity = os.clock()
+
+local SHARD_RULES = { APOTHESIS = 5e7, DARKSTAR = 9e8, CURSE = 5e10 }
+local STAND_MODEL = { APOTHESIS = "Apothesis", DARKSTAR = "DarkStar", CURSE = "CURSE" }
+local LB_SWORD = { APOTHESIS = "Apotheosis", DARKSTAR = "DarkStar", CURSE = "Curse" }
+
 local function fmt(n)
     if type(n) ~= "number" then return tostring(n) end
     if n >= 1e12 then return string.format("%.2ft", n / 1e12) end
@@ -24,39 +32,28 @@ local function fmt(n)
     if n >= 1e3 then return string.format("%.1fk", n / 1e3) end
     return tostring(math.floor(n))
 end
-local PHASES = {
-    APOTHESIS = {
-        { 0, "Magmatics", "Magmatic Monster" },
-        { 1e3, "Magmatics", "Magmatic Lord" },
-        { 1e4, "Voids", "Void King" },
-        { 1e6, "Dimensional Beings", "Existential" },
-        { 5e7, "Dimensional Beings", "Realmshatter" },
-    },
-    DARKSTAR = {
-        { 0, "Zombies", "Zombie" },
-        { 1, "Magmatics", "Magmatic Monster" },
-        { 250, "Magmatics", "Magmatic Lord" },
-        { 1500, "Guests", "Guest 666" },
-        { 5e4, "Voids", "Void King" },
-        { 175000, "Abyssals", "Abyssal King" },
-        { 5e6, "Castle Dummies", "God of Dummies" },
-        { 5e8, "Dimensional Beings", "Godverse" },
-    },
-    CURSE = {
-        { 0, "Bacons", "Bacon" },
-        { 25, "Magmatics", "Magmatic Monster" },
-        { 3500, "Voids", "Void King" },
-        { 5.25e6, "Castle Dummies", "God of Dummies" },
-        { 1e9, "Dimensional Beings", "Godverse" },
-    },
-}
-local SHARD_RULES = { APOTHESIS = 5e7, DARKSTAR = 9e8, CURSE = 5e10 }
-local function folderOf(name)
-    local map = workspace:FindFirstChild("Map")
-    local h = map and map:FindFirstChild("Humanoids")
-    return h and h:FindFirstChild(name) or nil
+
+local function char()
+    local c = LP.Character
+    return c, c and c:FindFirstChildOfClass("Humanoid"), c and c:FindFirstChild("HumanoidRootPart")
 end
-local function swordKills()
+
+local function equippedName()
+    local ls = LP:FindFirstChild("leaderstats")
+    local v = ls and ls:FindFirstChild("Sword")
+    return v and tostring(v.Value) or nil
+end
+
+local function isEquipped()
+    local cur = equippedName()
+    if not cur or cur == "" then return false end
+    local want = LB_SWORD[S.sword] or S.sword
+    if cur:lower() == want:lower() then return true end
+    local stand = STAND_MODEL[S.sword] or S.sword
+    return cur:lower() == stand:lower()
+end
+
+local function sacKills()
     local ch = LP.Character
     if ch then
         local tool = ch:FindFirstChildOfClass("Tool")
@@ -68,67 +65,151 @@ local function swordKills()
         v = ch:FindFirstChild("Kills")
         if v and v:IsA("ValueBase") then return tonumber(v.Value) or 0 end
     end
-    local ls = LP:FindFirstChild("leaderstats")
-    local v = ls and ls:FindFirstChild("Kills")
-    return v and tonumber(v.Value) or 0
+    return 0
 end
+
 local function voidShards()
     local ls = LP:FindFirstChild("leaderstats")
     local v = ls and ls:FindFirstChild("VoidShards")
     return v and tonumber(v.Value) or 0
 end
+
+local protect = { active = false, ff = nil, char = nil, saved = {} }
+
 local function clearProtection()
-    local ch = LP.Character
+    protect.active = false
+    if protect.ff then pcall(function() protect.ff:Destroy() end) end
+    protect.ff = nil
+    local ch = protect.char
     if ch then
-        for _, d in ipairs(ch:GetChildren()) do
-            if d:IsA("ForceField") then pcall(function() d:Destroy() end) end
-            if d:IsA("BoolValue") and d.Name == "CanBeKilled?" then pcall(function() d.Value = true end) end
+        for nm, val in pairs(protect.saved) do
+            local v = ch:FindFirstChild(nm) or (ch:FindFirstChild("Immunities") and ch.Immunities:FindFirstChild(nm))
+            if v and v:IsA("BoolValue") then pcall(function() v.Value = val end) end
         end
     end
+    protect.saved = {}
+    protect.char = nil
 end
-local function protect()
+
+local function applyProtection()
     local ch = LP.Character
     if not ch then return end
-    for _, d in ipairs(ch:GetChildren()) do
-        if d:IsA("BoolValue") and d.Name == "CanBeKilled?" then pcall(function() d.Value = false end) end
+    if protect.active and protect.char ~= ch then clearProtection() end
+    if not protect.active then
+        protect.char = ch
+        for _, nm in ipairs({ "CanBeKilled?", "HealthBypass", "nuhuh" }) do
+            local v = ch:FindFirstChild(nm) or (ch:FindFirstChild("Immunities") and ch.Immunities:FindFirstChild(nm))
+            if v and v:IsA("BoolValue") then
+                protect.saved[nm] = v.Value
+                v.Value = (nm == "CanBeKilled?") and false or true
+            end
+        end
+        protect.active = true
     end
-    if not ch:FindFirstChildOfClass("ForceField") then
-        local ff = Instance.new("ForceField")
-        ff.Visible = false
-        ff.Parent = ch
+    if not protect.ff or protect.ff.Parent ~= ch then
+        if protect.ff then pcall(function() protect.ff:Destroy() end) end
+        protect.ff = Instance.new("ForceField")
+        protect.ff.Name = "Y7FF"
+        protect.ff.Visible = false
+        protect.ff.Parent = ch
     end
 end
+
+local BODY = {
+    ["Head"] = true, ["Torso"] = true, ["UpperTorso"] = true, ["LowerTorso"] = true,
+    ["Left Arm"] = true, ["Right Arm"] = true, ["Left Leg"] = true, ["Right Leg"] = true,
+    ["LeftUpperArm"] = true, ["RightUpperArm"] = true, ["LeftLowerArm"] = true, ["RightLowerArm"] = true,
+    ["LeftUpperLeg"] = true, ["RightUpperLeg"] = true, ["LeftLowerLeg"] = true, ["RightLowerLeg"] = true,
+    ["HumanoidRootPart"] = true,
+}
+
+local weaponCache = { char = nil, tool = nil, parts = nil }
+
+local function weaponParts()
+    local ch = LP.Character
+    if not ch then
+        weaponCache = { char = nil, tool = nil, parts = nil }
+        return nil, nil
+    end
+    local tool = ch:FindFirstChildOfClass("Tool")
+    if weaponCache.char == ch and weaponCache.tool == tool and weaponCache.parts then
+        return weaponCache.parts, tool
+    end
+    local src = tool or ch
+    local parts = {}
+    for _, d in ipairs(src:GetDescendants()) do
+        if d:IsA("BasePart") and not BODY[d.Name] and d:FindFirstChildWhichIsA("TouchTransmitter") then
+            parts[#parts + 1] = d
+            if #parts >= 3 then break end
+        end
+    end
+    weaponCache = { char = ch, tool = tool, parts = parts }
+    return parts, tool
+end
+
+local function ensureTool()
+    local ch = LP.Character
+    if not ch then return end
+    if ch:FindFirstChildOfClass("Tool") then return end
+    local bp = LP:FindFirstChild("Backpack")
+    if not bp then return end
+    local want = (LB_SWORD[S.sword] or S.sword):lower()
+    local stand = (STAND_MODEL[S.sword] or S.sword):lower()
+    local pick
+    for _, t in ipairs(bp:GetChildren()) do
+        if t:IsA("Tool") then
+            local n = t.Name:lower()
+            if n == want or n == stand or n:find(want, 1, true) or n:find(stand, 1, true) then
+                pick = t
+                break
+            end
+            pick = pick or t
+        end
+    end
+    if pick then pcall(function() pick.Parent = ch end) end
+end
+
 local function equipSword()
     local map = workspace:FindFirstChild("Map")
     local f = map and map:FindFirstChild("Sword Stands")
     if not f then return false end
-    local models = { APOTHESIS = "Apothesis", DARKSTAR = "DarkStar", CURSE = "CURSE" }
-    local m = f:FindFirstChild(models[S.sword] or "Apothesis")
-    if not m then return false end
-    local hb = m:FindFirstChild("Hitbox")
-    if hb and hb:IsA("BasePart") then
-        local _, _, hrp = char()
-        if hrp then hrp.CFrame = CFrame.new(hb.Position + Vector3.new(0, 3, 0)) end
-        task.wait(0.4)
-        local cd = hb:FindFirstChildOfClass("ClickDetector") or (m:FindFirstChild("Part") and m.Part:FindFirstChildOfClass("ClickDetector"))
-        if cd then pcall(fireclickdetector, cd, 0, "MouseClick") end
-        return true
+    local model = f:FindFirstChild(STAND_MODEL[S.sword] or "CURSE")
+    local hitbox = model and model:FindFirstChild("Hitbox")
+    if not (hitbox and hitbox:IsA("BasePart")) then return false end
+    local _, _, hrp = char()
+    if hrp then
+        pcall(function() hrp.Anchored = false end)
+        hrp.CFrame = CFrame.new(hitbox.Position + Vector3.new(0, 3, 0))
     end
-    return false
+    task.wait(0.12)
+    local cd = hitbox:FindFirstChildOfClass("ClickDetector")
+        or (model:FindFirstChild("Part") and model.Part:FindFirstChildOfClass("ClickDetector"))
+    if cd then pcall(fireclickdetector, cd, 0, "MouseClick") end
+    for _ = 1, 15 do
+        task.wait(0.03)
+        ensureTool()
+        local ch = LP.Character
+        if ch and ch:FindFirstChildOfClass("Tool") then return true end
+    end
+    return isEquipped()
 end
-local function enterArena()
+
+local function goArena()
     local map = workspace:FindFirstChild("Map")
     local bp = map and map:FindFirstChild("BattleArenaPortal")
-    if not bp then return end
+    if not bp then return false end
     local sum, n = Vector3.zero, 0
     for _, d in ipairs(bp:GetDescendants()) do
         if d:IsA("BasePart") then sum += d.Position; n += 1 end
     end
-    if n == 0 then return end
+    if n == 0 then return false end
+    local target = sum / n
     local _, _, hrp = char()
     if hrp then
-        hrp.CFrame = CFrame.new(sum / n)
-        task.wait(0.25)
+        pcall(function() hrp.Anchored = false end)
+        hrp.CFrame = CFrame.new(target)
+        task.wait(0.15)
+        hrp.CFrame = CFrame.new(target)
         if firetouchinterest then
             for _, d in ipairs(bp:GetDescendants()) do
                 if d:IsA("BasePart") then
@@ -138,20 +219,31 @@ local function enterArena()
             end
         end
     end
+    return true
 end
-local function sacrifice()
+
+local function doSacrifice()
     local shrine = workspace:FindFirstChild("VO!D $HR1NE")
     local part = shrine and shrine:FindFirstChild("VoidShrinePrompt")
-    if not part then return false end
+    if not part then return false, "shrine not found" end
     local prompt = part:FindFirstChildOfClass("ProximityPrompt")
     local before = voidShards()
-    clearProtection()
+
+    if protect.active then clearProtection() end
+    local ch = LP.Character
+    if ch then
+        for _, p in ipairs(ch:GetChildren()) do
+            if p:IsA("ForceField") then pcall(function() p:Destroy() end) end
+        end
+    end
+
     local _, _, hrp = char()
     if hrp then
         pcall(function() hrp.Anchored = false end)
         hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2, 0))
     end
-    task.wait(0.4)
+    task.wait(0.3)
+
     if prompt then
         local original = prompt.HoldDuration
         pcall(function() prompt.HoldDuration = 0 end)
@@ -159,303 +251,487 @@ local function sacrifice()
         pcall(function() prompt.HoldDuration = original end)
     end
     pcall(function() game:GetService("ReplicatedStorage").Sacrifice:FireServer() end)
-    task.wait(0.8)
-    local after = voidShards()
-    print("[sac] void shards " .. tostring(before) .. " -> " .. tostring(after))
-    return after > before
-end
-local reachTool, orig = nil, {}
-local function applyReach()
-    local c = LP.Character
-    local t = c and c:FindFirstChildOfClass("Tool")
-    if not t then return end
-    if reachTool ~= t then reachTool = t; orig = {} end
-    for _, d in ipairs(t:GetDescendants()) do
-        local handle = d.Name == "Handle"
-        if d:IsA("BasePart") then
-            if not orig[d] then orig[d] = d.Size end
-            local o = orig[d]
-            if handle then
-                local w = math.max(S.width, 0.5) * 2
-                d.Size = Vector3.new(w, w, w)
-            else
-                d.Size = Vector3.new(o.X * S.scale, o.Y * S.scale, o.Z * S.scale)
-            end
-            d.CanCollide = false
-            d.CanTouch = true
-            d.Massless = true
-        end
+
+    local after = before
+    for _ = 1, 10 do
+        task.wait(0.1)
+        after = voidShards()
+        if after > before then break end
     end
+    return after > before, string.format("%s -> %s", tostring(before), tostring(after))
 end
-local function clearReach()
-    for d, sz in pairs(orig) do if d.Parent then pcall(function() d.Size = sz end) end end
-    orig = {}
-    reachTool = nil
-end
-local ext
-local function updateExt()
-    local c = LP.Character
-    local t = c and c:FindFirstChildOfClass("Tool")
-    if not t then return end
-    local blade
-    for _, d in ipairs(t:GetDescendants()) do if d:IsA("BasePart") and d.Name ~= "Handle" then blade = d; break end end
-    if not blade then return end
-    if not ext then
-        ext = Instance.new("Part")
-        ext.Name = "ksfu_reach"
-        ext.Transparency = 1
-        ext.CanCollide = false
-        ext.CanTouch = true
-        ext.Massless = true
-        ext.Anchored = true
-        ext.Parent = t
-    end
-    ext.Size = Vector3.new(math.max(S.width, 0.5), math.max(S.width, 0.5), S.length)
-    ext.CFrame = blade.CFrame * CFrame.new(0, 0, S.length / 2)
-end
-on(RunService.RenderStepped, function()
-    if not S.enabled then return end
-    applyProtection()
-    local _, hum = char()
-    if hum and hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
-    applyReach()
-    updateExt()
-end)
-task.spawn(function()
-    while true do
-        task.wait(0.3)
-        if not S.enabled then continue end
-        if S.busy then continue end
-        if S.entering then
-            local _, _, r = char()
-            if r and r.Position.Y < 2000 then
-                S.entering = false
-                print("[sac] in arena, resuming")
-            else
-                enterArena()
-                task.wait(0.5)
-            end
-            continue
-        end
-        if not S.killed then
-            S.busy = true
-            if equipSword() then
-                enterArena()
-                task.wait(0.6)
-                S.killed = true
-                S.startKills = swordKills()
-                print("[sac] equipped " .. S.sword .. ", kills=" .. fmt(S.startKills))
-            end
-            S.busy = false
-            continue
-        end
-        local gained = swordKills() - S.startKills
-        if gained < 0 then S.startKills = swordKills(); gained = 0 end
-        if gained >= (SHARD_RULES[S.sword] or 5e7) then
-            S.busy = true
-            local ok = sacrifice()
-            local changed = false
-            local cn = LP.CharacterAdded:Once(function() changed = true end)
-            local t0 = os.clock()
-            while not changed and os.clock() - t0 < 12 do task.wait(0.2) end
-            pcall(function() cn:Disconnect() end)
-            if ok or changed then
-                enterArena()
-                S.entering = true
-                S.startKills = 0
-                print("[sac] success, entering arena")
-            else
-                print("[sac] failed, retrying")
-                task.wait(2)
-            end
-            S.busy = false
-            continue
-        end
-        local stages = PHASES[S.sword] or PHASES.APOTHESIS
-        local chosen = stages[1]
-        for _, st in ipairs(stages) do if gained >= st[1] then chosen = st end end
-        local folder = folderOf(chosen[2])
-        if folder then
-            local best, bestName = nil, nil
-            for _, m in ipairs(folder:GetChildren()) do
-                if m:IsA("Model") then
-                    local hum = m:FindFirstChildOfClass("Humanoid")
-                    local root = m:FindFirstChild("HumanoidRootPart") or m:FindFirstChild("Torso")
-                    if hum and root and hum.Health > 0 then
-                        if chosen[3] and m.Name:lower():find(chosen[3]:lower(), 1, true) then
-                            best, bestName = root, m.Name
-                        elseif not bestName then
-                            best, bestName = root, m.Name
-                        end
+
+local function hitAll()
+    local parts, tool = weaponParts()
+    if not parts or #parts == 0 then return end
+    if tool then pcall(function() tool:Activate() end) end
+    local map = workspace:FindFirstChild("Map")
+    if not map then return end
+    for _, hm in ipairs(map:GetDescendants()) do
+        if hm:IsA("Humanoid") and hm.Health > 0 then
+            for _, p in ipairs(hm.Parent:GetChildren()) do
+                if p:IsA("BasePart") then
+                    for _, wp in ipairs(parts) do
+                        pcall(firetouchinterest, wp, p, 0)
                     end
                 end
             end
-            if best then
+        end
+    end
+end
+
+local function ensurePickaxe()
+    local ch = LP.Character
+    if not ch then return end
+    if ch:FindFirstChild("Celestial Pickaxe") then return end
+    local bp = LP:FindFirstChild("Backpack")
+    local pick = bp and bp:FindFirstChild("Celestial Pickaxe")
+    if pick then pcall(function() pick.Parent = ch end) end
+end
+
+local function equipPickaxe()
+    local ch = LP.Character
+    if not ch then return false end
+    if ch:FindFirstChild("Celestial Pickaxe") then return true end
+    local map = workspace:FindFirstChild("Map")
+    local f = map and map:FindFirstChild("Sword Stands")
+    local m = f and f:FindFirstChild("Celestial Pickaxe")
+    local hb = m and m:FindFirstChild("Hitbox")
+    if hb and hb:IsA("BasePart") then
+        local _, _, hrp = char()
+        if hrp then
+            pcall(function() hrp.Anchored = false end)
+            hrp.CFrame = CFrame.new(hb.Position + Vector3.new(0, 3, 0))
+        end
+        task.wait(0.12)
+        local cd = hb:FindFirstChildOfClass("ClickDetector")
+        if cd then pcall(fireclickdetector, cd, 0, "MouseClick") end
+    end
+    for _ = 1, 30 do
+        task.wait(0.03)
+        ensurePickaxe()
+        local c2 = LP.Character
+        if c2 and c2:FindFirstChild("Celestial Pickaxe") then return true end
+    end
+    return false
+end
+local function mineAll()
+    local cm = game:GetService("ReplicatedStorage"):FindFirstChild("CelestialMining")
+    local remote = cm and cm:FindFirstChild("MineHit")
+    local stones = cm and cm:FindFirstChild("Stones")
+    if not remote or not stones then return 0 end
+    ensurePickaxe()
+    local mined = 0
+    for _, st in ipairs(stones:GetChildren()) do
+        if not S.autoMine then break end
+        local oreName = tostring(st:GetAttribute("Ore") or "")
+        local oreMax = tonumber(st:GetAttribute("MaxHealth")) or 0
+        local astral = oreMax >= 1000 or oreName:find("Astral") ~= nil or oreName:find("Cosmaline") ~= nil or oreName:find("Starsteel") ~= nil or oreName:find("Galaxine") ~= nil
+        if astral and not S.mineAstral then continue end
+        if st:GetAttribute("Alive") == true then
+            local cf = st:GetAttribute("CFrame")
+            if typeof(cf) == "CFrame" then
                 local _, _, hrp = char()
                 if hrp then
+                    local anchor = cf.Position + Vector3.new(0, -6, 0)
                     pcall(function() hrp.Anchored = false end)
-                    hrp.CFrame = CFrame.new(best.Position + Vector3.new(0, -6, 0))
-                    task.wait(0.15)
+                    hrp.CFrame = CFrame.new(anchor)
+                    task.wait(0.12)
                     pcall(function() hrp.Anchored = true end)
-                    for _, p in ipairs(LP.Character:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end
-                    local tool = LP.Character:FindFirstChildOfClass("Tool")
-                    if tool then pcall(function() tool:Activate() end) end
+                    local maxHp = tonumber(st:GetAttribute("MaxHealth")) or 100
+                    local lastHp = tonumber(st:GetAttribute("Health")) or maxHp
+                    local lastDrop = os.clock()
+                    local lastSync = os.clock()
+                    local started = os.clock()
+                    local fired = 0
+                    while S.autoMine and st:GetAttribute("Alive") == true and os.clock() - started < 90 do
+                        local hp = tonumber(st:GetAttribute("Health")) or 0
+                        if hp < lastHp then
+                            lastHp = hp
+                            lastDrop = os.clock()
+                        end
+                        if hp <= 0 then break end
+                        if os.clock() - lastDrop > 15 then break end
+                        if os.clock() - lastSync > 2 then
+                            hrp.CFrame = CFrame.new(anchor)
+                            lastSync = os.clock()
+                        end
+                        pcall(function() remote:FireServer(st.Name) end)
+                        mined += 1
+                        lastMineActivity = os.clock()
+                        fired += 1
+                        if fired % 8 == 0 then
+                            hrp.CFrame = CFrame.new(anchor)
+                            task.wait()
+                        end
+                    end
+                    pcall(function() hrp.Anchored = false end)
                 end
             end
         end
     end
-end)
-getgenv().KSFUCleanup = function()
-	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-	clearProtection(); clearReach()
-	if ext then pcall(function() ext:Destroy() end) end
-	if getgenv().KSFUSacUI then pcall(function() getgenv().KSFUSacUI:Destroy() end) end
-	getgenv().KSFUSac = nil
-	getgenv().KSFUCleanup = nil
+    return mined
 end
-if getgenv().KSFUSacUI then pcall(function() getgenv().KSFUSacUI:Destroy() end) end
-local PlayerGui = LP:WaitForChild("PlayerGui")
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "KSFUSacUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.IgnoreGuiInset = true
-ScreenGui.Parent = PlayerGui
-getgenv().KSFUSacUI = ScreenGui
-local Window = Instance.new("Frame")
-Window.Size = UDim2.fromOffset(200, 158)
-Window.Position = UDim2.new(0, 30, 0, 90)
-Window.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-Window.BorderSizePixel = 0
-Window.Active = true
-Window.Draggable = true
-Window.Parent = ScreenGui
-Instance.new("UICorner", Window).CornerRadius = UDim.new(0, 6)
-local top = Instance.new("Frame")
-top.Size = UDim2.new(1, 0, 0, 22)
-top.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
-top.BorderSizePixel = 0
-top.Parent = Window
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -14, 1, 0)
-title.Position = UDim2.fromOffset(9, 0)
-title.BackgroundTransparency = 1
-title.Text = "sacrifice"
-title.Font = Enum.Font.Gotham
-title.TextSize = 11
-title.TextColor3 = Color3.fromRGB(190, 190, 200)
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = top
-local body = Instance.new("Frame")
-body.Size = UDim2.new(1, -16, 1, -30)
-body.Position = UDim2.fromOffset(8, 26)
-body.BackgroundTransparency = 1
-body.Parent = Window
-local bl = Instance.new("UIListLayout", body)
-bl.Padding = UDim.new(0, 4)
-local function row(height)
-    local f = Instance.new("Frame")
-    f.Size = UDim2.new(1, 0, 0, height or 20)
-    f.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
-    f.BorderSizePixel = 0
-    f.Parent = body
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 4)
-    return f
+
+
+local fps = { on = false, overlay = nil, saved = {}, savedFx = {}, savedParents = {}, savedLight = {}, savedTerrain = {} }
+
+local EFFECTS = {
+    "ParticleEmitter", "Trail", "Beam", "Fire", "Smoke", "Sparkles", "Highlight",
+    "BillboardGui", "PointLight", "SpotLight", "SurfaceLight",
+}
+local POSTFX = { "BloomEffect", "BlurEffect", "ColorCorrectionEffect", "DepthOfFieldEffect", "SunRaysEffect", "Sky", "Atmosphere" }
+local LIGHT_PROPS = { "Brightness", "Exposure", "Ambient", "FogColor", "FogStart", "FogEnd", "GlobalShadows", "Quality", "Technology" }
+local TERRAIN_PROPS = { "WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterRefraction" }
+
+local function isEffect(e)
+    for _, cls in ipairs(EFFECTS) do if e:IsA(cls) then return true end end
+    return false
 end
-local function label(parent, text, x, w)
-    local l = Instance.new("TextLabel")
-    l.Size = UDim2.fromOffset(w or 100, 14)
-    l.Position = UDim2.new(0, x or 8, 0.5, -7)
-    l.BackgroundTransparency = 1
-    l.Text = text
-    l.Font = Enum.Font.Gotham
-    l.TextSize = 10
-    l.TextColor3 = Color3.fromRGB(165, 165, 175)
-    l.TextXAlignment = Enum.TextXAlignment.Left
-    l.Parent = parent
-    return l
+
+local function isPostFx(e)
+    for _, cls in ipairs(POSTFX) do if e:IsA(cls) then return true end end
+    return false
 end
-local tr = row(22)
-local toggleLabel = label(tr, "auto sacrifice", 8, 110)
-local knobBg = Instance.new("TextButton")
-knobBg.Size = UDim2.fromOffset(24, 12)
-knobBg.Position = UDim2.new(1, -32, 0.5, -6)
-knobBg.BackgroundColor3 = Color3.fromRGB(45, 45, 52)
-knobBg.BorderSizePixel = 0
-knobBg.Text = ""
-knobBg.Parent = tr
-Instance.new("UICorner", knobBg).CornerRadius = UDim.new(1, 0)
-local knob = Instance.new("Frame")
-knob.Size = UDim2.fromOffset(8, 8)
-knob.Position = UDim2.fromOffset(2, 2)
-knob.BackgroundColor3 = Color3.fromRGB(220, 220, 230)
-knob.BorderSizePixel = 0
-knob.Parent = knobBg
-Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-local sr = row(20)
-local Status = label(sr, "idle", 8, 176)
-Status.TextWrapped = false
-local wr = row(20)
-label(wr, "sword", 8, 40)
-local swordBtn = Instance.new("TextButton")
-swordBtn.Size = UDim2.fromOffset(100, 14)
-swordBtn.Position = UDim2.new(1, -108, 0.5, -7)
-swordBtn.BackgroundColor3 = Color3.fromRGB(38, 38, 46)
-swordBtn.BorderSizePixel = 0
-swordBtn.Text = "APOTHESIS"
-swordBtn.Font = Enum.Font.Gotham
-swordBtn.TextSize = 10
-swordBtn.TextColor3 = Color3.fromRGB(200, 200, 210)
-swordBtn.Parent = wr
-Instance.new("UICorner", swordBtn).CornerRadius = UDim.new(0, 3)
-local rr = row(20)
-local resetBtn = Instance.new("TextButton")
-resetBtn.Size = UDim2.new(1, -16, 0, 14)
-resetBtn.Position = UDim2.fromOffset(8, 3)
-resetBtn.BackgroundColor3 = Color3.fromRGB(38, 38, 46)
-resetBtn.BorderSizePixel = 0
-resetBtn.Text = "reset cycle"
-resetBtn.Font = Enum.Font.Gotham
-resetBtn.TextSize = 10
-resetBtn.TextColor3 = Color3.fromRGB(190, 190, 200)
-resetBtn.Parent = rr
-Instance.new("UICorner", resetBtn).CornerRadius = UDim.new(0, 3)
-local function refreshKnob()
-    knobBg.BackgroundColor3 = S.enabled and Color3.fromRGB(70, 110, 80) or Color3.fromRGB(45, 45, 52)
-    knob.Position = UDim2.fromOffset(S.enabled and 14 or 2, 2)
-end
-local function updateStatus()
-    local gained = S.killed and (swordKills() - S.startKills) or 0
-    Status.Text = string.format("%s  %s/%s", S.sword, fmt(gained), fmt(SHARD_RULES[S.sword] or 5e7))
-end
-knobBg.MouseButton1Click:Connect(function()
-    S.enabled = not S.enabled
-    refreshKnob()
-    if not S.enabled then
-        S.busy, S.entering = false, false
-        clearProtection(); clearReach()
-        if ext then pcall(function() ext:Destroy() end); ext = nil end
+
+local function setFps(on)
+    if fps.on == on then return end
+    fps.on = on
+    local pg = LP:FindFirstChild("PlayerGui")
+    local lig = game.Lighting
+    local terrain = workspace:FindFirstChild("Terrain")
+    if on then
+        fps.saved = {}
+        if pg then
+            for _, g in ipairs(pg:GetChildren()) do
+                if g:IsA("ScreenGui") then
+                    fps.saved[g] = g.Enabled
+                    pcall(function() g.Enabled = false end)
+                end
+            end
+            local ov = Instance.new("ScreenGui")
+            ov.Name = "Y7Black"
+            ov.DisplayOrder = 900000
+            local bg = Instance.new("Frame")
+            bg.Size = UDim2.fromScale(1, 1)
+            bg.BackgroundColor3 = Color3.new(0, 0, 0)
+            bg.BorderSizePixel = 0
+            bg.Parent = ov
+            ov.Parent = pg
+            fps.overlay = ov
+        end
+
+        fps.savedFx, fps.savedParents = {}, {}
+        for _, e in ipairs(game:GetDescendants()) do
+            if isEffect(e) then
+                local ok, v = pcall(function() return e.Enabled end)
+                if ok and type(v) == "boolean" then
+                    fps.savedFx[e] = v
+                    pcall(function() e.Enabled = false end)
+                end
+            elseif e:IsA("Decal") or e:IsA("Texture") then
+                local ok, v = pcall(function() return e.Visible end)
+                if ok then fps.savedFx[e] = v; pcall(function() e.Visible = false end) end
+            elseif e:IsA("Sound") then
+                local ok, v = pcall(function() return e.Volume end)
+                if ok then fps.savedFx[e] = v; pcall(function() e.Volume = 0; e:Stop() end) end
+            elseif isPostFx(e) then
+                fps.savedParents[e] = e.Parent
+                pcall(function() e.Parent = nil end)
+            end
+        end
+
+        fps.savedLight = {}
+        for _, prop in ipairs(LIGHT_PROPS) do
+            local ok, v = pcall(function() return lig[prop] end)
+            if ok then fps.savedLight[prop] = v end
+        end
+        pcall(function()
+            lig.Brightness = 0
+            lig.Exposure = 0
+            lig.Ambient = Color3.new(0, 0, 0)
+            lig.FogColor = Color3.new(0, 0, 0)
+            lig.FogStart = 0
+            lig.FogEnd = 100
+            lig.GlobalShadows = false
+            lig.Quality = Enum.QualityLevel.Minimum
+            lig.Technology = Enum.Technology.Compatibility
+        end)
+
+        if terrain then
+            fps.savedTerrain = {}
+            for _, prop in ipairs(TERRAIN_PROPS) do
+                local ok, v = pcall(function() return terrain[prop] end)
+                if ok then fps.savedTerrain[prop] = v end
+            end
+            pcall(function()
+                terrain.WaterWaveSize = 0
+                terrain.WaterWaveSpeed = 0
+                terrain.WaterReflectance = 0
+                terrain.WaterRefraction = 0
+            end)
+        end
+    else
+        if fps.overlay then pcall(function() fps.overlay:Destroy() end); fps.overlay = nil end
+        for g, v in pairs(fps.saved) do if g.Parent then pcall(function() g.Enabled = v end) end end
+        for e, v in pairs(fps.savedFx) do
+            if e.Parent then
+                if e:IsA("Decal") or e:IsA("Texture") then pcall(function() e.Visible = v end)
+                elseif e:IsA("Sound") then pcall(function() e.Volume = v end)
+                else pcall(function() e.Enabled = v end) end
+            end
+        end
+        for e, p in pairs(fps.savedParents) do if p then pcall(function() e.Parent = p end) end end
+        for prop, v in pairs(fps.savedLight) do pcall(function() lig[prop] = v end) end
+        if terrain then for prop, v in pairs(fps.savedTerrain) do pcall(function() terrain[prop] = v end) end end
+        fps.saved, fps.savedFx, fps.savedParents = {}, {}, {}
+        fps.savedLight, fps.savedTerrain = {}, {}
     end
-    updateStatus()
-end)
-local swordList = { "APOTHESIS", "DARKSTAR", "CURSE" }
-local swordIndex = 1
-swordBtn.MouseButton1Click:Connect(function()
-    swordIndex = swordIndex % #swordList + 1
-    S.sword = swordList[swordIndex]
-    S.killed = false
-    swordBtn.Text = S.sword
-    updateStatus()
-end)
-resetBtn.MouseButton1Click:Connect(function()
-    S.killed = false; S.startKills = 0; S.entering = false
-    updateStatus()
-end)
+end
+local Window = Rayfield:CreateWindow({
+    name = "Y7 Hub",
+    configuration = { autoSave = true, autoLoad = true, fileName = "Y7Hub" },
+})
+
+local Main = Window:CreateTab({ name = "Sacrifice" })
+
+Main:CreateToggle({
+    name = "auto sacrifice",
+    flag = "AutoSac",
+    value = false,
+    callback = function(v)
+        S.enabled = v
+        if not v then
+            S.armed, S.busy = false, false
+            if protect.active then clearProtection() end
+            weaponCache = { char = nil, tool = nil, parts = nil }
+        end
+    end,
+})
+
+local progress
+
+Main:CreateDropdown({
+    name = "sword",
+    flag = "Sword",
+    options = { "CURSE", "DARKSTAR", "APOTHESIS" },
+    value = "CURSE",
+    callback = function(v)
+        S.sword = v
+        S.armed = false
+        if progress then
+            pcall(function() progress:SetRange(0, SHARD_RULES[v] or 5e10) end)
+        end
+    end,
+})
+
+progress = Main:CreateProgress({
+    name = "sword kills",
+    range = { 0, 5e10 },
+    value = 0,
+    format = function(v, _, mx) return string.format("%s / %s", fmt(v), fmt(mx)) end,
+})
+
+local status = Main:CreateText({ name = "status", text = "idle" })
+
+Main:CreateButton({
+    name = "reset cycle",
+    callback = function()
+        S.armed = false
+        S.startKills = 0
+        pcall(function() progress:Set(0) end)
+    end,
+})
+
+Main:CreateButton({
+    name = "unload",
+    callback = function()
+        pcall(function() Window:Unload() end)
+    end,
+})
+
+Main:CreateToggle({
+    name = "fps boost",
+    flag = "FpsBoost",
+    value = false,
+    callback = function(v)
+        setFps(v)
+    end,
+})
+local Mining = Window:CreateTab({ name = "Mining" })
+
+Mining:CreateToggle({
+    name = "mine astral ores",
+    flag = "MineAstral",
+    value = false,
+    callback = function(v)
+        S.mineAstral = v
+    end,
+})
+Mining:CreateToggle({
+    name = "auto mine ores",
+    flag = "AutoMine",
+    value = false,
+    callback = function(v)
+        S.autoMine = v
+        if v then
+            task.spawn(equipPickaxe)
+        else
+            local _, _, hrp = char()
+            if hrp then pcall(function() hrp.Anchored = false end) end
+        end
+    end,
+})
+
+
 task.spawn(function()
-    while ScreenGui.Parent do
-        task.wait(0.5)
-        updateStatus()
+    local lastArena = 0
+    while not Window.unloaded do
+        task.wait(0.2)
+        if not S.autoMine or S.enabled or S.busy then
+            miningChar = nil
+            continue
+        end
+        local ch, hum = char()
+        if not ch or not hum or hum.Health <= 0 then
+            miningChar = nil
+            continue
+        end
+        if miningChar ~= ch or not ch:FindFirstChild("Celestial Pickaxe") then
+            if os.clock() - lastArena > 2 then
+                lastArena = os.clock()
+                S.busy = true
+                if not ch:FindFirstChild("Celestial Pickaxe") then equipPickaxe() end
+                goArena()
+                task.wait(0.5)
+                ensurePickaxe()
+                S.busy = false
+            end
+            miningChar = ch
+            continue
+        end
+        applyProtection()
+        if hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
+        local ok = pcall(mineAll)
+        if not ok then
+            miningChar = nil
+            S.busy = false
+        end
+        if os.clock() - lastMineActivity > 12 then
+            miningChar = nil
+            S.busy = false
+            local _, _, hr = char()
+            if hr then pcall(function() hr.Anchored = false end) end
+            task.spawn(function()
+                equipPickaxe()
+                goArena()
+                task.wait(0.4)
+                ensurePickaxe()
+            end)
+            lastMineActivity = os.clock()
+        end
     end
 end)
-getgenv().KSFUSac = { S = S, destroy = function() pcall(function() ScreenGui:Destroy() end) end }
-refreshKnob()
-print("[ksfu] sacrifice standalone loaded")
+
+
+task.spawn(function()
+    while not Window.unloaded do
+        task.wait(0.15)
+        if not S.enabled then
+            pcall(function() status:Set("idle") end)
+            continue
+        end
+        if S.busy then continue end
+
+        local ch, hum = char()
+        if not ch or not hum or hum.Health <= 0 then
+            S.armed = false
+            pcall(function() status:Set("respawning") end)
+            continue
+        end
+
+        applyProtection()
+        if hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
+
+        if not S.armed then
+            if not isEquipped() then
+                S.busy = true
+                pcall(function() status:Set("equipping " .. S.sword) end)
+                local ok = equipSword()
+                S.busy = false
+                if not ok then
+                    pcall(function() status:Set("equip failed, retrying") end)
+                    task.wait(0.3)
+                end
+                continue
+            end
+            S.busy = true
+            pcall(function() status:Set("entering arena") end)
+            goArena()
+            ensureTool()
+            for _ = 1, 20 do
+                local c2 = LP.Character
+                if c2 and c2:FindFirstChildOfClass("Tool") then break end
+                task.wait(0.03)
+                ensureTool()
+            end
+            task.wait(0.15)
+            S.startKills = sacKills()
+            S.armed = true
+            S.busy = false
+            continue
+        end
+
+        hitAll()
+
+        local target = SHARD_RULES[S.sword] or 5e10
+        local gained = sacKills() - S.startKills
+        if gained < 0 then
+            S.startKills = sacKills()
+            gained = 0
+        end
+        local wp = weaponParts()
+        local relay = (wp and #wp > 0) and "relay ok" or "no weapon part"
+        pcall(function() progress:Set(math.clamp(gained, 0, target)) end)
+        pcall(function() status:Set(string.format("%s  %s / %s  %s", S.sword, fmt(gained), fmt(target), relay)) end)
+
+        if gained >= target then
+            S.busy = true
+            pcall(function() status:Set("sacrificing") end)
+            local ok, detail = doSacrifice()
+            local changed = false
+            local cn = LP.CharacterAdded:Once(function() changed = true end)
+            local t0 = os.clock()
+            while not changed and os.clock() - t0 < 10 do task.wait(0.2) end
+            pcall(function() cn:Disconnect() end)
+            print(string.format("[sac] %s | %s | died=%s", tostring(ok), tostring(detail), tostring(changed)))
+            S.armed = false
+            S.startKills = 0
+            weaponCache = { char = nil, tool = nil, parts = nil }
+            pcall(function() progress:Set(0) end)
+            if not (ok or changed) then
+                pcall(function() status:Set("sacrifice failed, retrying") end)
+                task.wait(1)
+            end
+            S.busy = false
+        end
+    end
+end)
+
+getgenv().Y7Hub = {
+    S = S,
+    destroy = function()
+        setFps(false)
+        S.enabled = false
+        S.autoMine = false
+        S.mineAstral = false
+        local _, _, hr = char()
+        if hr then pcall(function() hr.Anchored = false end) end
+        if protect.active then clearProtection() end
+        weaponCache = { char = nil, tool = nil, parts = nil }
+        pcall(function() Window:Unload() end)
+        getgenv().Y7Hub = nil
+    end,
+}
+
+print("[Y7Hub] loaded")
