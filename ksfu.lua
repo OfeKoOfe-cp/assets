@@ -19,6 +19,12 @@ local S = {
 
 local miningChar = nil
 local lastMineActivity = os.clock()
+local cutsceneAt = 0
+pcall(function()
+    game:GetService("ReplicatedStorage").VoidShrineCutscene.OnClientEvent:Connect(function()
+        cutsceneAt = os.clock()
+    end)
+end)
 
 local SHARD_RULES = { APOTHESIS = 5e7, DARKSTAR = 9e8, CURSE = 5e10 }
 local STAND_MODEL = { APOTHESIS = "Apothesis", DARKSTAR = "DarkStar", CURSE = "CURSE" }
@@ -234,23 +240,88 @@ local function doSacrifice()
     if ch then
         for _, p in ipairs(ch:GetChildren()) do
             if p:IsA("ForceField") then pcall(function() p:Destroy() end) end
+            if p:IsA("BoolValue") and p.Name == "CanBeKilled?" then pcall(function() p.Value = true end) end
+        end
+        local imm = ch:FindFirstChild("Immunities")
+        if imm then
+            for _, p in ipairs(imm:GetChildren()) do
+                if p:IsA("BoolValue") then pcall(function() p.Value = true end) end
+            end
         end
     end
 
     local _, _, hrp = char()
     if hrp then
         pcall(function() hrp.Anchored = false end)
-        hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 2, 0))
+        hrp.CFrame = part.CFrame
+        task.wait(0.2)
     end
-    task.wait(0.3)
 
-    if prompt then
-        local original = prompt.HoldDuration
-        pcall(function() prompt.HoldDuration = 0 end)
-        pcall(fireproximityprompt, prompt)
-        pcall(function() prompt.HoldDuration = original end)
+    local livePart, livePrompt
+    for _ = 1, 3 do
+        livePart = shrine and shrine:FindFirstChild("VoidShrinePrompt")
+        livePrompt = livePart and livePart:FindFirstChildOfClass("ProximityPrompt")
+        if livePrompt then break end
+        local _, _, r = char()
+        if r and part then
+            pcall(function() r.Anchored = false end)
+            r.CFrame = CFrame.new(part.Position + Vector3.new(0, 40, 0))
+        end
+        task.wait(0.4)
     end
-    pcall(function() game:GetService("ReplicatedStorage").Sacrifice:FireServer() end)
+    if livePrompt then
+        livePart = livePart or part
+        local _, _, r = char()
+        local ch2 = LP.Character
+        if ch2 then
+            local hum2 = ch2:FindFirstChildOfClass("Humanoid")
+            if hum2 then pcall(function() hum2.PlatformStand = false end) end
+            for _, p in ipairs(ch2:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end
+        end
+        if r and livePart then
+            pcall(function() r.Anchored = false end)
+            r.CFrame = livePart.CFrame
+            task.wait(0.15)
+            pcall(function() r.Anchored = false end)
+        end
+        pcall(function()
+            livePrompt.Enabled = true
+            livePrompt.RequiresLineOfSight = false
+            livePrompt.MaxActivationDistance = 100
+            livePrompt.HoldDuration = 0
+        end)
+        pcall(fireproximityprompt, livePrompt)
+
+        local cutStart = os.clock()
+        for _ = 1, 4 do
+            local hit = false
+            local t0 = os.clock()
+            while os.clock() - t0 < 0.7 do
+                task.wait(0.05)
+                if cutsceneAt > cutStart or voidShards() > before then hit = true; break end
+            end
+            if hit then break end
+            local _, _, r2 = char()
+            if not r2 then break end
+            pcall(function() r2.Anchored = false end)
+            r2.CFrame = CFrame.new(part.Position + Vector3.new(0, 40, 0))
+            task.wait(0.35)
+            local freshPart = shrine and shrine:FindFirstChild("VoidShrinePrompt")
+            local freshPrompt = freshPart and freshPart:FindFirstChildOfClass("ProximityPrompt")
+            if not (freshPart and freshPrompt) then continue end
+            r2.CFrame = freshPart.CFrame
+            task.wait(0.15)
+            pcall(function()
+                freshPrompt.Enabled = true
+                freshPrompt.RequiresLineOfSight = false
+                freshPrompt.MaxActivationDistance = 100
+                freshPrompt.HoldDuration = 0
+            end)
+            pcall(fireproximityprompt, freshPrompt)
+        end
+    end
 
     local after = before
     for _ = 1, 10 do
@@ -260,7 +331,6 @@ local function doSacrifice()
     end
     return after > before, string.format("%s -> %s", tostring(before), tostring(after))
 end
-
 local function hitAll()
     local parts, tool = weaponParts()
     if not parts or #parts == 0 then return end
@@ -374,168 +444,6 @@ local function mineAll()
 end
 
 
-local fps = { on = false, overlay = nil, saved = {}, savedFx = {}, savedParents = {}, savedLight = {}, savedTerrain = {}, savedNpc = {}, npcConn = nil }
-
-local EFFECTS = {
-    "ParticleEmitter", "Trail", "Beam", "Fire", "Smoke", "Sparkles", "Highlight",
-    "BillboardGui", "PointLight", "SpotLight", "SurfaceLight",
-}
-local POSTFX = { "BloomEffect", "BlurEffect", "ColorCorrectionEffect", "DepthOfFieldEffect", "SunRaysEffect", "Sun", "Sky", "Atmosphere" }
-local ADORNMENTS = { "SelectionBox", "SelectionSphere", "BoxHandleAdornment", "SphereHandleAdornment", "CylinderHandleAdornment", "ConeHandleAdornment", "WedgeHandleAdornment", "ImageHandleAdornment", "LineHandleAdornment", "CircleHandleAdornment", "WireframeHandleAdornment", "SurfaceGui" }
-local LIGHT_PROPS = { "Brightness", "Exposure", "Ambient", "FogColor", "FogStart", "FogEnd", "GlobalShadows" }
-local TERRAIN_PROPS = { "WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterRefraction" }
-
-local function isEffect(e)
-    for _, cls in ipairs(EFFECTS) do if e:IsA(cls) then return true end end
-    return false
-end
-
-local function isPostFx(e)
-    for _, cls in ipairs(POSTFX) do if e:IsA(cls) then return true end end
-    return false
-end
-
-local function isAdornment(e)
-    for _, cls in ipairs(ADORNMENTS) do if e:IsA(cls) then return true end end
-    return false
-end
-
-local function hideNpcs(save)
-    local map = workspace:FindFirstChild("Map")
-    if not map then return end
-    local myChar = LP.Character
-    for _, hm in ipairs(map:GetDescendants()) do
-        if hm:IsA("Humanoid") then
-            local model = hm.Parent
-            if model and model ~= myChar then
-                if save then
-                    local ok, v = pcall(function() return hm.DisplayDistanceType end)
-                    if ok and fps.savedNpc[hm] == nil then fps.savedNpc[hm] = v end
-                end
-                pcall(function() hm.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
-                for _, p in ipairs(model:GetDescendants()) do
-                    if p:IsA("BasePart") then
-                        if save and fps.savedNpc[p] == nil then fps.savedNpc[p] = p.LocalTransparencyModifier end
-                        pcall(function() p.LocalTransparencyModifier = 1 end)
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function setFps(on)
-    if fps.on == on then return end
-    fps.on = on
-    local pg = LP:FindFirstChild("PlayerGui")
-    local lig = game.Lighting
-    local terrain = workspace:FindFirstChild("Terrain")
-    if on then
-        fps.saved = {}
-        if pg then
-            for _, g in ipairs(pg:GetChildren()) do
-                if g:IsA("ScreenGui") then
-                    fps.saved[g] = g.Enabled
-                    pcall(function() g.Enabled = false end)
-                end
-            end
-            local ov = Instance.new("ScreenGui")
-            ov.Name = "Y7Black"
-            ov.DisplayOrder = 900000
-            local bg = Instance.new("Frame")
-            bg.Size = UDim2.fromScale(1, 1)
-            bg.BackgroundColor3 = Color3.new(0, 0, 0)
-            bg.BorderSizePixel = 0
-            bg.Parent = ov
-            ov.Parent = pg
-            fps.overlay = ov
-        end
-
-        fps.savedFx, fps.savedParents = {}, {}
-        for _, e in ipairs(game:GetDescendants()) do
-            if isEffect(e) then
-                local ok, v = pcall(function() return e.Enabled end)
-                if ok and type(v) == "boolean" then
-                    fps.savedFx[e] = v
-                    pcall(function() e.Enabled = false end)
-                end
-            elseif isAdornment(e) then
-                local ok, v = pcall(function() return e.Visible end)
-                if ok then fps.savedFx[e] = v; pcall(function() e.Visible = false end) end
-            elseif e:IsA("Decal") or e:IsA("Texture") then
-                local ok, v = pcall(function() return e.Visible end)
-                if ok then fps.savedFx[e] = v; pcall(function() e.Visible = false end) end
-            elseif e:IsA("Sound") then
-                local ok, v = pcall(function() return e.Volume end)
-                if ok then fps.savedFx[e] = v; pcall(function() e.Volume = 0; e:Stop() end) end
-            elseif isPostFx(e) then
-                fps.savedParents[e] = e.Parent
-                pcall(function() e.Parent = nil end)
-            end
-        end
-
-        fps.savedLight = {}
-        for _, prop in ipairs(LIGHT_PROPS) do
-            local ok, v = pcall(function() return lig[prop] end)
-            if ok then fps.savedLight[prop] = v end
-        end
-        pcall(function()
-            lig.Brightness = 0
-            lig.Exposure = 0
-            lig.Ambient = Color3.new(0, 0, 0)
-            lig.FogColor = Color3.new(0, 0, 0)
-            lig.FogStart = 0
-            lig.FogEnd = 100
-            lig.GlobalShadows = false
-        end)
-
-        hideNpcs(true)
-        local map = workspace:FindFirstChild("Map")
-        if map then
-            fps.npcConn = map.DescendantAdded:Connect(function(d)
-                if not fps.on then return end
-                if d:IsA("Humanoid") or (d:IsA("BasePart") and d.Parent and d.Parent:FindFirstChildOfClass("Humanoid")) then
-                    hideNpcs(true)
-                end
-            end)
-        end
-        if terrain then
-            fps.savedTerrain = {}
-            for _, prop in ipairs(TERRAIN_PROPS) do
-                local ok, v = pcall(function() return terrain[prop] end)
-                if ok then fps.savedTerrain[prop] = v end
-            end
-            pcall(function()
-                terrain.WaterWaveSize = 0
-                terrain.WaterWaveSpeed = 0
-                terrain.WaterReflectance = 0
-                terrain.WaterRefraction = 0
-            end)
-        end
-    else
-        if fps.npcConn then pcall(function() fps.npcConn:Disconnect() end); fps.npcConn = nil end
-        if fps.overlay then pcall(function() fps.overlay:Destroy() end); fps.overlay = nil end
-        for g, v in pairs(fps.saved) do if g.Parent then pcall(function() g.Enabled = v end) end end
-        for e, v in pairs(fps.savedFx) do
-            if e.Parent then
-                if e:IsA("Decal") or e:IsA("Texture") then pcall(function() e.Visible = v end)
-                elseif e:IsA("Sound") then pcall(function() e.Volume = v end)
-                else pcall(function() e.Enabled = v end) end
-            end
-        end
-        for o, v in pairs(fps.savedNpc) do
-            if o.Parent then
-                if o:IsA("BasePart") then pcall(function() o.LocalTransparencyModifier = v end)
-                elseif o:IsA("Humanoid") then pcall(function() o.DisplayDistanceType = v end) end
-            end
-        end
-        for e, p in pairs(fps.savedParents) do if p then pcall(function() e.Parent = p end) end end
-        for prop, v in pairs(fps.savedLight) do pcall(function() lig[prop] = v end) end
-        if terrain then for prop, v in pairs(fps.savedTerrain) do pcall(function() terrain[prop] = v end) end end
-        fps.saved, fps.savedFx, fps.savedParents = {}, {}, {}
-        fps.savedLight, fps.savedTerrain, fps.savedNpc = {}, {}, {}
-    end
-end
 local Window = Rayfield:CreateWindow({
     name = "Y7 Hub",
     configuration = { autoSave = true, autoLoad = true, fileName = "Y7Hub" },
@@ -598,14 +506,6 @@ Main:CreateButton({
     end,
 })
 
-Main:CreateToggle({
-    name = "fps boost",
-    flag = "FpsBoost",
-    value = false,
-    callback = function(v)
-        setFps(v)
-    end,
-})
 local Mining = Window:CreateTab({ name = "Mining" })
 
 Mining:CreateToggle({
@@ -752,7 +652,6 @@ task.spawn(function()
             local t0 = os.clock()
             while not changed and os.clock() - t0 < 10 do task.wait(0.2) end
             pcall(function() cn:Disconnect() end)
-            print(string.format("[sac] %s | %s | died=%s", tostring(ok), tostring(detail), tostring(changed)))
             S.armed = false
             S.startKills = 0
             weaponCache = { char = nil, tool = nil, parts = nil }
@@ -766,10 +665,10 @@ task.spawn(function()
     end
 end)
 
+
 getgenv().Y7Hub = {
     S = S,
     destroy = function()
-        setFps(false)
         S.enabled = false
         S.autoMine = false
         S.mineAstral = false
@@ -781,5 +680,3 @@ getgenv().Y7Hub = {
         getgenv().Y7Hub = nil
     end,
 }
-
-print("[Y7Hub] loaded")
