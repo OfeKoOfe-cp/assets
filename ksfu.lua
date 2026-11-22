@@ -374,14 +374,15 @@ local function mineAll()
 end
 
 
-local fps = { on = false, overlay = nil, saved = {}, savedFx = {}, savedParents = {}, savedLight = {}, savedTerrain = {} }
+local fps = { on = false, overlay = nil, saved = {}, savedFx = {}, savedParents = {}, savedLight = {}, savedTerrain = {}, savedNpc = {}, npcConn = nil }
 
 local EFFECTS = {
     "ParticleEmitter", "Trail", "Beam", "Fire", "Smoke", "Sparkles", "Highlight",
     "BillboardGui", "PointLight", "SpotLight", "SurfaceLight",
 }
-local POSTFX = { "BloomEffect", "BlurEffect", "ColorCorrectionEffect", "DepthOfFieldEffect", "SunRaysEffect", "Sky", "Atmosphere" }
-local LIGHT_PROPS = { "Brightness", "Exposure", "Ambient", "FogColor", "FogStart", "FogEnd", "GlobalShadows", "Quality", "Technology" }
+local POSTFX = { "BloomEffect", "BlurEffect", "ColorCorrectionEffect", "DepthOfFieldEffect", "SunRaysEffect", "Sun", "Sky", "Atmosphere" }
+local ADORNMENTS = { "SelectionBox", "SelectionSphere", "BoxHandleAdornment", "SphereHandleAdornment", "CylinderHandleAdornment", "ConeHandleAdornment", "WedgeHandleAdornment", "ImageHandleAdornment", "LineHandleAdornment", "CircleHandleAdornment", "WireframeHandleAdornment", "SurfaceGui" }
+local LIGHT_PROPS = { "Brightness", "Exposure", "Ambient", "FogColor", "FogStart", "FogEnd", "GlobalShadows" }
 local TERRAIN_PROPS = { "WaterWaveSize", "WaterWaveSpeed", "WaterReflectance", "WaterRefraction" }
 
 local function isEffect(e)
@@ -392,6 +393,35 @@ end
 local function isPostFx(e)
     for _, cls in ipairs(POSTFX) do if e:IsA(cls) then return true end end
     return false
+end
+
+local function isAdornment(e)
+    for _, cls in ipairs(ADORNMENTS) do if e:IsA(cls) then return true end end
+    return false
+end
+
+local function hideNpcs(save)
+    local map = workspace:FindFirstChild("Map")
+    if not map then return end
+    local myChar = LP.Character
+    for _, hm in ipairs(map:GetDescendants()) do
+        if hm:IsA("Humanoid") then
+            local model = hm.Parent
+            if model and model ~= myChar then
+                if save then
+                    local ok, v = pcall(function() return hm.DisplayDistanceType end)
+                    if ok and fps.savedNpc[hm] == nil then fps.savedNpc[hm] = v end
+                end
+                pcall(function() hm.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+                for _, p in ipairs(model:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        if save and fps.savedNpc[p] == nil then fps.savedNpc[p] = p.LocalTransparencyModifier end
+                        pcall(function() p.LocalTransparencyModifier = 1 end)
+                    end
+                end
+            end
+        end
+    end
 end
 
 local function setFps(on)
@@ -429,6 +459,9 @@ local function setFps(on)
                     fps.savedFx[e] = v
                     pcall(function() e.Enabled = false end)
                 end
+            elseif isAdornment(e) then
+                local ok, v = pcall(function() return e.Visible end)
+                if ok then fps.savedFx[e] = v; pcall(function() e.Visible = false end) end
             elseif e:IsA("Decal") or e:IsA("Texture") then
                 local ok, v = pcall(function() return e.Visible end)
                 if ok then fps.savedFx[e] = v; pcall(function() e.Visible = false end) end
@@ -454,10 +487,18 @@ local function setFps(on)
             lig.FogStart = 0
             lig.FogEnd = 100
             lig.GlobalShadows = false
-            lig.Quality = Enum.QualityLevel.Minimum
-            lig.Technology = Enum.Technology.Compatibility
         end)
 
+        hideNpcs(true)
+        local map = workspace:FindFirstChild("Map")
+        if map then
+            fps.npcConn = map.DescendantAdded:Connect(function(d)
+                if not fps.on then return end
+                if d:IsA("Humanoid") or (d:IsA("BasePart") and d.Parent and d.Parent:FindFirstChildOfClass("Humanoid")) then
+                    hideNpcs(true)
+                end
+            end)
+        end
         if terrain then
             fps.savedTerrain = {}
             for _, prop in ipairs(TERRAIN_PROPS) do
@@ -472,6 +513,7 @@ local function setFps(on)
             end)
         end
     else
+        if fps.npcConn then pcall(function() fps.npcConn:Disconnect() end); fps.npcConn = nil end
         if fps.overlay then pcall(function() fps.overlay:Destroy() end); fps.overlay = nil end
         for g, v in pairs(fps.saved) do if g.Parent then pcall(function() g.Enabled = v end) end end
         for e, v in pairs(fps.savedFx) do
@@ -481,11 +523,17 @@ local function setFps(on)
                 else pcall(function() e.Enabled = v end) end
             end
         end
+        for o, v in pairs(fps.savedNpc) do
+            if o.Parent then
+                if o:IsA("BasePart") then pcall(function() o.LocalTransparencyModifier = v end)
+                elseif o:IsA("Humanoid") then pcall(function() o.DisplayDistanceType = v end) end
+            end
+        end
         for e, p in pairs(fps.savedParents) do if p then pcall(function() e.Parent = p end) end end
         for prop, v in pairs(fps.savedLight) do pcall(function() lig[prop] = v end) end
         if terrain then for prop, v in pairs(fps.savedTerrain) do pcall(function() terrain[prop] = v end) end end
         fps.saved, fps.savedFx, fps.savedParents = {}, {}, {}
-        fps.savedLight, fps.savedTerrain = {}, {}
+        fps.savedLight, fps.savedTerrain, fps.savedNpc = {}, {}, {}
     end
 end
 local Window = Rayfield:CreateWindow({
