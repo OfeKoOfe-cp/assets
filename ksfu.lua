@@ -13,6 +13,7 @@ local S = {
     armed = false,
     busy = false,
     autoMine = false,
+    killFarm = false,
     mineAstral = false,
     startKills = 0,
 }
@@ -31,6 +32,7 @@ local function startAntiAfk()
     end)
 end
 task.spawn(startAntiAfk)
+local lastKillAdvance = os.clock()
 local lastMineActivity = os.clock()
 local cutsceneAt = 0
 pcall(function()
@@ -72,13 +74,31 @@ local function isEquipped()
     return cur:lower() == stand:lower()
 end
 
+local killRefCache = { char = nil, ref = nil }
+
+local function killReference()
+    local ch = LP.Character
+    if not ch then
+        killRefCache = { char = nil, ref = nil }
+        return nil
+    end
+    if killRefCache.char == ch then return killRefCache.ref end
+    local ref
+    local tool = ch:FindFirstChildOfClass("Tool")
+    if tool then
+        for _, d in ipairs(tool:GetDescendants()) do
+            if d:IsA("ObjectValue") and d.Name == "KillReference" then ref = d; break end
+        end
+    end
+    killRefCache = { char = ch, ref = ref }
+    return ref
+end
+
 local function sacKills()
     local ch = LP.Character
     if ch then
-        local tool = ch:FindFirstChildOfClass("Tool")
-        local ref = tool and tool:FindFirstChild("SwordScript")
-        ref = ref and ref:FindFirstChild("KillReference")
-        local nm = ref and tostring(ref.Value) or "Kills"
+        local ref = killReference()
+        local nm = ref and ref.Value and tostring(ref.Value) or "Kills"
         local v = ch:FindFirstChild(nm)
         if v and v:IsA("ValueBase") then return tonumber(v.Value) or 0 end
         v = ch:FindFirstChild("Kills")
@@ -151,7 +171,7 @@ local function weaponParts()
         return nil, nil
     end
     local tool = ch:FindFirstChildOfClass("Tool")
-    if weaponCache.char == ch and weaponCache.tool == tool and weaponCache.parts then
+    if weaponCache.char == ch and weaponCache.tool == tool and weaponCache.parts and #weaponCache.parts > 0 then
         return weaponCache.parts, tool
     end
     local src = tool or ch
@@ -245,23 +265,40 @@ local function goArena()
     local map = workspace:FindFirstChild("Map")
     local bp = map and map:FindFirstChild("BattleArenaPortal")
     if not bp then return false end
-    local sum, n = Vector3.zero, 0
-    for _, d in ipairs(bp:GetDescendants()) do
-        if d:IsA("BasePart") then sum += d.Position; n += 1 end
+    local tel = bp:FindFirstChild("Teleporter")
+    if not tel then
+        local portal = bp:FindFirstChild("Portal")
+        tel = portal and portal:FindFirstChild("Teleporter")
     end
-    if n == 0 then return false end
-    local target = sum / n
+    local target
+    if tel and tel:IsA("BasePart") then
+        target = tel.Position + Vector3.new(0, 3, 0)
+    else
+        local sum, n = Vector3.zero, 0
+        for _, d in ipairs(bp:GetDescendants()) do
+            if d:IsA("BasePart") then sum += d.Position; n += 1 end
+        end
+        if n == 0 then return false end
+        target = sum / n
+        tel = nil
+    end
     local _, _, hrp = char()
     if hrp then
         pcall(function() hrp.Anchored = false end)
         hrp.CFrame = CFrame.new(target)
         task.wait(0.15)
-        hrp.CFrame = CFrame.new(target)
+        pcall(function() hrp.CFrame = CFrame.new(target) end)
         if firetouchinterest then
-            for _, d in ipairs(bp:GetDescendants()) do
-                if d:IsA("BasePart") then
-                    pcall(firetouchinterest, d, hrp, 0)
-                    pcall(firetouchinterest, d, hrp, 1)
+            if tel then
+                pcall(firetouchinterest, tel, hrp, 0)
+                local rng = tel:FindFirstChild("Range")
+                if rng and rng:IsA("BasePart") then pcall(firetouchinterest, rng, hrp, 0) end
+            else
+                for _, d in ipairs(bp:GetDescendants()) do
+                    if d:IsA("BasePart") then
+                        pcall(firetouchinterest, d, hrp, 0)
+                        pcall(firetouchinterest, d, hrp, 1)
+                    end
                 end
             end
         end
@@ -372,12 +409,75 @@ local function doSacrifice()
     end
     return after > before, string.format("%s -> %s", tostring(before), tostring(after))
 end
+local ARENA_MIN_Y = 1000
+local ARENA_MAX_Y = 1700
+local NPC_AGE = 0.4
+
+local npcCache = { at = 0, list = {}, containers = nil }
+
+local function findContainers()
+    local map = workspace:FindFirstChild("Map")
+    local out, seen = {}, {}
+    if not map then return out end
+    local function consider(node)
+        if seen[node] then return end
+        for _, m in ipairs(node:GetChildren()) do
+            if m:FindFirstChildOfClass("Humanoid") then
+                seen[node] = true
+                out[#out + 1] = node
+                return
+            end
+        end
+    end
+    for _, a in ipairs(map:GetChildren()) do
+        consider(a)
+        for _, b in ipairs(a:GetChildren()) do
+            consider(b)
+            for _, c in ipairs(b:GetChildren()) do consider(c) end
+        end
+    end
+    return out
+end
+
+local function npcList(maxAge)
+    local now = os.clock()
+    if maxAge and (now - npcCache.at) < maxAge then return npcCache.list end
+    if not npcCache.containers or #npcCache.containers == 0 then
+        npcCache.containers = findContainers()
+    end
+    local t = {}
+    local live = 0
+    for _, c in ipairs(npcCache.containers) do
+        if c.Parent then
+            live += 1
+            for _, m in ipairs(c:GetChildren()) do
+                local hm = m:FindFirstChildOfClass("Humanoid")
+                if hm and hm.Health > 0 then
+                    local r = m:FindFirstChild("HumanoidRootPart")
+                    if r then
+                        t[#t + 1] = {
+                            hum = hm,
+                            root = r,
+                            torso = m:FindFirstChild("UpperTorso") or m:FindFirstChild("Torso"),
+                        }
+                    end
+                end
+            end
+        end
+    end
+    if live == 0 then npcCache.containers = findContainers() end
+    npcCache.at = now
+    npcCache.list = t
+    return t
+end
+
 local function hitAll()
     local parts, tool = weaponParts()
-    if not parts or #parts == 0 then return end
+    if not parts or #parts == 0 then return 0 end
     if tool then pcall(function() tool:Activate() end) end
     local map = workspace:FindFirstChild("Map")
-    if not map then return end
+    if not map then return 0 end
+    local n = 0
     for _, hm in ipairs(map:GetDescendants()) do
         if hm:IsA("Humanoid") and hm.Health > 0 then
             for _, p in ipairs(hm.Parent:GetChildren()) do
@@ -385,10 +485,27 @@ local function hitAll()
                     for _, wp in ipairs(parts) do
                         pcall(firetouchinterest, wp, p, 0)
                     end
+                    n += 1
                 end
             end
         end
     end
+    return n
+end
+
+local function arenaOk()
+    local _, hum, hrp = char()
+    if not hum or not hrp or hum.Health <= 0 then return false, 0 end
+    local y = hrp.Position.Y
+    local inBand = y >= ARENA_MIN_Y and y <= ARENA_MAX_Y
+    local p = hrp.Position
+    local list = npcList(NPC_AGE)
+    local n = 0
+    for i = 1, #list do
+        local r = list[i].root
+        if r.Parent and (r.Position - p).Magnitude <= 600 then n += 1 end
+    end
+    return inBand, n
 end
 
 local function ensurePickaxe()
@@ -491,7 +608,7 @@ end
 
 local Window = Rayfield:CreateWindow({
     name = "Y7 Hub",
-    configuration = { autoSave = true, autoLoad = true, fileName = "Y7Hub" },
+    configuration = { autoSave = false, autoLoad = false, forgetState = true },
 })
 
 local Main = Window:CreateTab({ name = "Sacrifice" })
@@ -551,6 +668,15 @@ Main:CreateButton({
     end,
 })
 
+Main:CreateToggle({
+    name = "kill all enemies",
+    flag = "KillFarm",
+    value = false,
+    callback = function(v)
+        S.killFarm = v
+        if not v and protect.active then clearProtection() end
+    end,
+})
 local Mining = Window:CreateTab({ name = "Mining" })
 
 Mining:CreateToggle({
@@ -628,10 +754,20 @@ end)
 
 
 task.spawn(function()
+    local uiAt = 0
+    local healAt = 0
+    local armedChar = nil
+    local arenaLostAt = os.clock()
+    local relaySoftAt = os.clock()
+    local relayHardAt = os.clock()
     while not Window.unloaded do
-        task.wait(0.15)
+        task.wait()
         if not S.enabled then
-            pcall(function() status:Set("idle") end)
+            armedChar = nil
+            if os.clock() - uiAt > 0.25 then
+                uiAt = os.clock()
+                pcall(function() status:Set("idle") end)
+            end
             continue
         end
         if S.busy then continue end
@@ -639,12 +775,27 @@ task.spawn(function()
         local ch, hum = char()
         if not ch or not hum or hum.Health <= 0 then
             S.armed = false
-            pcall(function() status:Set("respawning") end)
+            armedChar = nil
+            arenaLostAt = os.clock()
+            if os.clock() - uiAt > 0.25 then
+                uiAt = os.clock()
+                pcall(function() status:Set("respawning") end)
+            end
+            continue
+        end
+
+        if S.armed and armedChar ~= ch then
+            S.armed = false
+            armedChar = nil
+            weaponCache = { char = nil, tool = nil, parts = nil }
             continue
         end
 
         applyProtection()
-        if hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
+        if os.clock() - healAt > 0.1 then
+            healAt = os.clock()
+            if hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
+        end
 
         if not S.armed then
             if not isEquipped() then
@@ -661,25 +812,46 @@ task.spawn(function()
             S.busy = true
             pcall(function() status:Set("entering arena") end)
             goArena()
-            for _ = 1, 60 do
+            for _ = 1, 80 do
                 ensureTool(true)
                 if hasTool() then break end
                 task.wait(0.05)
             end
-            if not hasTool() then
-                S.busy = false
-                S.armed = false
-                pcall(equipSword)
-                continue
+            if hasTool() then
+                task.wait(0.15)
+                armedChar = LP.Character
+                S.startKills = sacKills()
+                S.armed = true
+                arenaLostAt = os.clock()
+                relaySoftAt = os.clock()
+                relayHardAt = os.clock()
+                lastKillAdvance = os.clock()
+            else
+                pcall(function() status:Set("waiting for sword") end)
             end
-            task.wait(0.15)
-            S.startKills = sacKills()
-            S.armed = true
             S.busy = false
             continue
         end
 
-        hitAll()
+        local inArena, near = arenaOk()
+        if inArena then
+            arenaLostAt = os.clock()
+        elseif os.clock() - arenaLostAt > 3 then
+            S.armed = false
+            arenaLostAt = os.clock()
+            weaponCache = { char = nil, tool = nil, parts = nil }
+            npcCache.containers = nil
+            pcall(function() status:Set("not in arena, re-entering") end)
+            pcall(goArena)
+            continue
+        end
+
+        if not weaponParts() or #weaponParts() == 0 then
+            weaponCache = { char = nil, tool = nil, parts = nil }
+            ensureTool(true)
+        end
+
+        local swept = hitAll()
 
         local target = SHARD_RULES[S.sword] or 5e10
         local gained = sacKills() - S.startKills
@@ -687,10 +859,43 @@ task.spawn(function()
             S.startKills = sacKills()
             gained = 0
         end
-        local wp = weaponParts()
-        local relay = (wp and #wp > 0) and "relay ok" or "no weapon part"
-        pcall(function() progress:Set(math.clamp(gained, 0, target)) end)
-        pcall(function() status:Set(string.format("%s  %s / %s  %s", S.sword, fmt(gained), fmt(target), relay)) end)
+        if gained > 0 then
+            lastKillAdvance = os.clock()
+            relaySoftAt = os.clock()
+            relayHardAt = os.clock()
+        else
+            local gap = os.clock() - relaySoftAt
+            if inArena and (swept == 0 or gap > 4) and gap > 0.75 then
+                relaySoftAt = os.clock()
+                local c2 = LP.Character
+                local t2 = c2 and c2:FindFirstChildOfClass("Tool")
+                if t2 then pcall(function() t2.Enabled = true end) end
+                weaponCache = { char = nil, tool = nil, parts = nil }
+                npcCache.containers = nil
+                ensureTool(true)
+                if not hasTool() then pcall(equipSword) end
+            end
+            if os.clock() - relayHardAt > 20 then
+                relayHardAt = os.clock()
+                relaySoftAt = os.clock()
+                S.armed = false
+                armedChar = nil
+                weaponCache = { char = nil, tool = nil, parts = nil }
+                npcCache.containers = nil
+                pcall(goArena)
+                continue
+            end
+        end
+
+        if os.clock() - uiAt > 0.25 then
+            uiAt = os.clock()
+            local wp = weaponParts()
+            local relay = (wp and #wp > 0) and "relay ok" or "no weapon part"
+            pcall(function() progress:Set(math.clamp(gained, 0, target)) end)
+            pcall(function()
+                status:Set(string.format("%s  %s / %s  npc %d  %s", S.sword, fmt(gained), fmt(target), near or 0, relay))
+            end)
+        end
 
         if gained >= target then
             S.busy = true
@@ -704,23 +909,57 @@ task.spawn(function()
             S.armed = false
             S.startKills = 0
             weaponCache = { char = nil, tool = nil, parts = nil }
+            npcCache.containers = nil
             pcall(function() progress:Set(0) end)
             if not (ok or changed) then
                 pcall(function() status:Set("sacrifice failed, retrying") end)
                 task.wait(1)
             end
             S.busy = false
+            arenaLostAt = os.clock()
         end
     end
 end)
 
 
+task.spawn(function()
+    local arenaAt = os.clock()
+    local healAt = 0
+    while not Window.unloaded do
+        task.wait()
+        if not S.killFarm or S.enabled or S.busy then continue end
+        local ch, hum = char()
+        if not ch or not hum or hum.Health <= 0 then continue end
+        applyProtection()
+        if os.clock() - healAt > 0.1 then
+            healAt = os.clock()
+            if hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
+        end
+        local inArena = arenaOk()
+        if not inArena then
+            if os.clock() - arenaAt > 3 then
+                arenaAt = os.clock()
+                weaponCache = { char = nil, tool = nil, parts = nil }
+                npcCache.containers = nil
+                pcall(goArena)
+            end
+            continue
+        end
+        arenaAt = os.clock()
+        if not weaponParts() or #weaponParts() == 0 then
+            weaponCache = { char = nil, tool = nil, parts = nil }
+            ensureTool(true)
+        end
+        hitAll()
+    end
+end)
 getgenv().Y7Hub = {
     S = S,
     destroy = function()
         if afkConn then pcall(function() afkConn:Disconnect() end); afkConn = nil end
         S.enabled = false
         S.autoMine = false
+        S.killFarm = false
         S.mineAstral = false
         local _, _, hr = char()
         if hr then pcall(function() hr.Anchored = false end) end
