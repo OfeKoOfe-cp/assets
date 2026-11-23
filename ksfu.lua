@@ -166,26 +166,55 @@ local function weaponParts()
     return parts, tool
 end
 
-local function ensureTool()
-    local ch = LP.Character
-    if not ch then return end
-    if ch:FindFirstChildOfClass("Tool") then return end
-    local bp = LP:FindFirstChild("Backpack")
-    if not bp then return end
+local function toolMatches(t)
+    local n = t.Name:lower()
     local want = (LB_SWORD[S.sword] or S.sword):lower()
     local stand = (STAND_MODEL[S.sword] or S.sword):lower()
+    return n == want or n == stand or n:find(want, 1, true) ~= nil or n:find(stand, 1, true) ~= nil
+end
+
+local function hasTool()
+    local ch = LP.Character
+    if not ch then return false end
+    for _, t in ipairs(ch:GetChildren()) do
+        if t:IsA("Tool") and toolMatches(t) then return true end
+    end
+    return false
+end
+
+local function ensureTool(strict)
+    local ch = LP.Character
+    if not ch then return end
+    local bp = LP:FindFirstChild("Backpack")
+    if strict then
+        for _, t in ipairs(ch:GetChildren()) do
+            if t:IsA("Tool") and toolMatches(t) then
+                local humEq = ch:FindFirstChildOfClass("Humanoid")
+                if humEq then pcall(function() humEq:EquipTool(t) end) end
+                return
+            end
+        end
+        if bp then
+            for _, t in ipairs(ch:GetChildren()) do
+                if t:IsA("Tool") and not toolMatches(t) then pcall(function() t.Parent = bp end) end
+            end
+        end
+    else
+        if ch:FindFirstChildOfClass("Tool") then return end
+    end
+    if not bp then return end
     local pick
     for _, t in ipairs(bp:GetChildren()) do
         if t:IsA("Tool") then
-            local n = t.Name:lower()
-            if n == want or n == stand or n:find(want, 1, true) or n:find(stand, 1, true) then
-                pick = t
-                break
-            end
-            pick = pick or t
+            if toolMatches(t) then pick = t; break end
+            if not strict then pick = pick or t end
         end
     end
-    if pick then pcall(function() pick.Parent = ch end) end
+    if pick then
+        pcall(function() pick.Parent = ch end)
+        local humEq = ch:FindFirstChildOfClass("Humanoid")
+        if humEq then pcall(function() humEq:EquipTool(pick) end) end
+    end
 end
 
 local function equipSword()
@@ -204,11 +233,10 @@ local function equipSword()
     local cd = hitbox:FindFirstChildOfClass("ClickDetector")
         or (model:FindFirstChild("Part") and model.Part:FindFirstChildOfClass("ClickDetector"))
     if cd then pcall(fireclickdetector, cd, 0, "MouseClick") end
-    for _ = 1, 15 do
+    for _ = 1, 30 do
         task.wait(0.03)
-        ensureTool()
-        local ch = LP.Character
-        if ch and ch:FindFirstChildOfClass("Tool") then return true end
+        ensureTool(true)
+        if hasTool() then return true end
     end
     return isEquipped()
 end
@@ -369,7 +397,11 @@ local function ensurePickaxe()
     if ch:FindFirstChild("Celestial Pickaxe") then return end
     local bp = LP:FindFirstChild("Backpack")
     local pick = bp and bp:FindFirstChild("Celestial Pickaxe")
-    if pick then pcall(function() pick.Parent = ch end) end
+    if pick then
+        pcall(function() pick.Parent = ch end)
+        local humEq = ch:FindFirstChildOfClass("Humanoid")
+        if humEq then pcall(function() humEq:EquipTool(pick) end) end
+    end
 end
 
 local function equipPickaxe()
@@ -629,12 +661,16 @@ task.spawn(function()
             S.busy = true
             pcall(function() status:Set("entering arena") end)
             goArena()
-            ensureTool()
-            for _ = 1, 20 do
-                local c2 = LP.Character
-                if c2 and c2:FindFirstChildOfClass("Tool") then break end
-                task.wait(0.03)
-                ensureTool()
+            for _ = 1, 60 do
+                ensureTool(true)
+                if hasTool() then break end
+                task.wait(0.05)
+            end
+            if not hasTool() then
+                S.busy = false
+                S.armed = false
+                pcall(equipSword)
+                continue
             end
             task.wait(0.15)
             S.startKills = sacKills()
