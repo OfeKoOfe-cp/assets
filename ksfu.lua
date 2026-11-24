@@ -521,22 +521,42 @@ local function npcList(maxAge)
     return t
 end
 
+local sweep = { at = 0, models = {} }
+
+local function sweepRefresh()
+    local map = workspace:FindFirstChild("Map")
+    local out = {}
+    if map then
+        for _, hm in ipairs(map:GetDescendants()) do
+            if hm:IsA("Humanoid") and hm.Health > 0 then
+                local list = {}
+                for _, p in ipairs(hm.Parent:GetChildren()) do
+                    if p:IsA("BasePart") then list[#list + 1] = p end
+                end
+                if #list > 0 then out[#out + 1] = list end
+            end
+        end
+    end
+    sweep.models = out
+    sweep.at = os.clock()
+end
+
 local function hitAll()
     local parts, tool = weaponParts()
     if not parts or #parts == 0 then return 0 end
     if tool then pcall(function() tool:Activate() end) end
-    local map = workspace:FindFirstChild("Map")
-    if not map then return 0 end
+    if os.clock() - sweep.at > 0.35 then sweepRefresh() end
     local n = 0
-    for _, hm in ipairs(map:GetDescendants()) do
-        if hm:IsA("Humanoid") and hm.Health > 0 then
-            for _, p in ipairs(hm.Parent:GetChildren()) do
-                if p:IsA("BasePart") then
-                    for _, wp in ipairs(parts) do
-                        pcall(firetouchinterest, wp, p, 0)
-                    end
-                    n += 1
+    local models = sweep.models
+    for i = 1, #models do
+        local list = models[i]
+        for j = 1, #list do
+            local p = list[j]
+            if p.Parent then
+                for w = 1, #parts do
+                    pcall(firetouchinterest, parts[w], p, 0)
                 end
+                n += 1
             end
         end
     end
