@@ -1,4 +1,4 @@
-# Venus Lib Ã¢â‚¬â€ Solara-fixed
+# Venus Lib ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Solara-fixed
 
 Fixed copy of `Venus Lib Source.lua` from
 `ro0ti/Roblox-Scripting-UI` for use on Solara.
@@ -38,7 +38,7 @@ Everything else is byte-for-byte upstream.
 
 ```lua
 local Venus = loadstring(game:HttpGet(
-  "https://raw.githubusercontent.com/OfeKoOfe-cp/assets/main/VenusLib-Fixed/Venus%20Lib%20Source.lua?v=4"
+  "https://raw.githubusercontent.com/OfeKoOfe-cp/assets/main/VenusLib-Fixed/Venus%20Lib%20Source.lua?v=5"
 ))()
 
 local W = Venus:Load({

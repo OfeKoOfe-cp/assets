@@ -1075,23 +1075,16 @@ function utility.nextflag()
 end
 
 function utility.rgba(r, g, b, alpha)
-    local rgb = Color3.fromRGB(r, g, b)
-    local mt = table.clone(getrawmetatable(rgb))
-    
-    setreadonly(mt, false)
-    local old = mt.__index
-    
-    mt.__index = newcclosure(function(self, key)
-        if key:lower() == "a" then
-            return alpha
-        end
-        
-        return old(self, key)
-    end)
-    
-    setrawmetatable(rgb, mt)
-    
-    return rgb
+    local c = Color3.fromRGB(r, g, b)
+    if not alpha or alpha >= 1 then return c end
+    return {
+        R = c.R, G = c.G, B = c.B, A = alpha,
+        r = c.R, g = c.G, b = c.B,
+        ToHSV = function()
+            local h, s, v = c:ToHSV()
+            return { h = h, s = s, v = v, r = c.R, g = c.G, b = c.B }
+        end,
+    }
 end
 
 local themes = {
@@ -1131,7 +1124,7 @@ local themes = {
 local themeobjects = {}
 
 local library = utility.table({theme = table.clone(themes.Default), folder = "vozoiduilib", extension = "vozoid", flags = {}, open = true, keybind = Enum.KeyCode.RightShift, mousestate = services.InputService.MouseIconEnabled, cursor = nil, holder = nil, connections = {}}, true)
-local decode = (syn and syn.crypt.base64.decode) or (crypt and crypt.base64decode) or base64_decode
+local decode = base64_decode
 library.gradient = decode("iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABuSURBVChTxY9BDoAgDASLGD2ReOYNPsR/+BAfroI7hibe9OYmky2wbUPIOdsXdc1f9WMwppQm+SDGBnUvomAQBH49qzhFEag25869ElzaIXDhD4JGbyoEVxUedN8FKwnfmwhucgKICc+pNB1mZhdCdhsa2ky0FAAAAABJRU5ErkJggg==")
 library.utility = utility
 
