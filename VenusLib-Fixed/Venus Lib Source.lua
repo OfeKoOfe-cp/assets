@@ -324,7 +324,26 @@ local drawing = {} do
     end)
 
     function drawing:new(shape)
-        if shape == "Triangle" or shape == "Quad" then shape = "Square" end
+        if shape == "Triangle" or shape == "Quad" then
+            local ln = Drawing.new("Line")
+            ln.Thickness = 1
+            ln.Visible = true
+            local proxy = setmetatable({}, {
+                __index = function(_, k)
+                    if k == "PointA" then return ln.From end
+                    if k == "PointB" then return ln.To end
+                    if k == "PointC" then return ln.To end
+                    if k == "Remove" then return function() pcall(function() ln:Remove() end) end end
+                    return ln[k]
+                end,
+                __newindex = function(_, k, v)
+                    if k == "PointA" then ln.From = v
+                    elseif k == "PointB" or k == "PointC" then ln.To = v
+                    else ln[k] = v end
+                end,
+            })
+            return proxy
+        end
         local obj = Drawing.new(shape)
         objexists[obj] = true
         local signalnames = {}
