@@ -324,26 +324,6 @@ local drawing = {} do
     end)
 
     function drawing:new(shape)
-        if shape == "Triangle" or shape == "Quad" then
-            local ln = Drawing.new("Line")
-            ln.Thickness = 1
-            ln.Visible = true
-            local proxy = setmetatable({}, {
-                __index = function(_, k)
-                    if k == "PointA" then return ln.From end
-                    if k == "PointB" then return ln.To end
-                    if k == "PointC" then return ln.To end
-                    if k == "Remove" then return function() pcall(function() ln:Remove() end) end end
-                    return ln[k]
-                end,
-                __newindex = function(_, k, v)
-                    if k == "PointA" then ln.From = v
-                    elseif k == "PointB" or k == "PointC" then ln.To = v
-                    else ln[k] = v end
-                end,
-            })
-            return proxy
-        end
         local obj = Drawing.new(shape)
         objexists[obj] = true
         local signalnames = {}
@@ -2822,8 +2802,9 @@ function library:Load(options)
         self.extension = extension
     end
 
-    local cursor = utility.create("Triangle", {
-        Thickness = 6,
+    local cursor = utility.create("Circle", {
+        Radius = 5,
+        Thickness = 2,
         Color = Color3.fromRGB(255, 255, 255),
         ZIndex = 1000
     })
@@ -2835,9 +2816,7 @@ function library:Load(options)
     utility.connect(services.RunService.RenderStepped, function()
         if self.open then
             local mousepos = services.InputService:GetMouseLocation()
-            cursor.PointA = mousepos
-            cursor.PointB = mousepos + Vector2.new(6, 12)
-            cursor.PointC = mousepos + Vector2.new(6, 12)
+            cursor.Position = mousepos
         end
     end)
 

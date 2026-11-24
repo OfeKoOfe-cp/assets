@@ -1,4 +1,4 @@
-# Venus Lib â€” Solara-fixed
+# Venus Lib Ã¢â‚¬â€ Solara-fixed
 
 Fixed copy of `Venus Lib Source.lua` from
 `ro0ti/Roblox-Scripting-UI` for use on Solara.
@@ -26,7 +26,7 @@ which Solara handles correctly:
 
 ```lua
 function drawing:new(shape)
-    if shape == "Triangle" or shape == "Quad" then shape = "Square" end
+    -- Cursor uses a Circle instead of a Triangle (Solara cannot set Triangle.Visible)
     local obj = Drawing.new(shape)
     ...
 end
@@ -38,7 +38,7 @@ Everything else is byte-for-byte upstream.
 
 ```lua
 local Venus = loadstring(game:HttpGet(
-  "https://raw.githubusercontent.com/OfeKoOfe-cp/assets/main/VenusLib-Fixed/Venus%20Lib%20Source.lua?v=2"
+  "https://raw.githubusercontent.com/OfeKoOfe-cp/assets/main/VenusLib-Fixed/Venus%20Lib%20Source.lua?v=4"
 ))()
 
 local W = Venus:Load({
