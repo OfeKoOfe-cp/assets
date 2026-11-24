@@ -196,10 +196,11 @@ end
 local function hasTool()
     local ch = LP.Character
     if not ch then return false end
-    for _, t in ipairs(ch:GetChildren()) do
-        if t:IsA("Tool") and toolMatches(t) then return true end
-    end
-    return false
+    return ch:FindFirstChildOfClass("Tool") ~= nil
+end
+
+local function isPickaxe(t)
+    return t.Name:lower():find("pickaxe", 1, true) ~= nil
 end
 
 local function ensureTool(strict)
@@ -214,28 +215,32 @@ local function ensureTool(strict)
                 return
             end
         end
-        if bp then
-            for _, t in ipairs(ch:GetChildren()) do
-                if t:IsA("Tool") and not toolMatches(t) then pcall(function() t.Parent = bp end) end
-            end
-        end
     else
         if ch:FindFirstChildOfClass("Tool") then return end
     end
     if not bp then return end
     local pick
     for _, t in ipairs(bp:GetChildren()) do
-        if t:IsA("Tool") then
+        if t:IsA("Tool") and not isPickaxe(t) then
             if toolMatches(t) then pick = t; break end
-            if not strict then pick = pick or t end
+            pick = pick or t
+        end
+    end
+    if not pick then
+        for _, t in ipairs(ch:GetChildren()) do
+            if t:IsA("Tool") and not isPickaxe(t) then pick = t; break end
         end
     end
     if pick then
-        pcall(function() pick.Parent = ch end)
+        if pick.Parent ~= ch then pcall(function() pick.Parent = ch end) end
         local humEq = ch:FindFirstChildOfClass("Humanoid")
         if humEq then pcall(function() humEq:EquipTool(pick) end) end
     end
 end
+
+local arenaOk
+
+local Window
 
 local function equipSword()
     local map = workspace:FindFirstChild("Map")
@@ -244,34 +249,68 @@ local function equipSword()
     local model = f:FindFirstChild(STAND_MODEL[S.sword] or "CURSE")
     local hitbox = model and model:FindFirstChild("Hitbox")
     if not (hitbox and hitbox:IsA("BasePart")) then return false end
-    local _, _, hrp = char()
-    if hrp then
-        pcall(function() hrp.Anchored = false end)
-        hrp.CFrame = CFrame.new(hitbox.Position + Vector3.new(0, 3, 0))
-    end
-    task.wait(0.12)
     local cd = hitbox:FindFirstChildOfClass("ClickDetector")
         or (model:FindFirstChild("Part") and model.Part:FindFirstChildOfClass("ClickDetector"))
-    if cd then pcall(fireclickdetector, cd, 0, "MouseClick") end
+    if not cd then return false end
+    pcall(fireclickdetector, cd, 0, "MouseClick")
     for _ = 1, 30 do
         task.wait(0.03)
         ensureTool(true)
         if hasTool() then return true end
     end
+    if isEquipped() then return true end
+    local _, _, hrp = char()
+    if hrp then
+        pcall(function() hrp.Anchored = false end)
+        hrp.CFrame = CFrame.new(hitbox.Position + Vector3.new(0, 3, 0))
+        task.wait(0.1)
+        pcall(fireclickdetector, cd, 0, "MouseClick")
+        for _ = 1, 30 do
+            task.wait(0.03)
+            ensureTool(true)
+            if hasTool() then return true end
+        end
+    end
     return isEquipped()
+end
+
+local function portalTrigger(bp)
+    local tel = bp:FindFirstChild("Teleporter")
+    if not tel then
+        local portal = bp:FindFirstChild("Portal")
+        tel = portal and portal:FindFirstChild("Teleporter")
+    end
+    if tel and tel:IsA("BasePart") then return tel end
+    return nil
+end
+
+local function touchPortal(bp)
+    local _, _, hrp = char()
+    if not hrp or not firetouchinterest then return false end
+    local tel = portalTrigger(bp)
+    local list = {}
+    if tel then
+        list[1] = tel
+        local rng = tel:FindFirstChild("Range")
+        if rng and rng:IsA("BasePart") then list[#list + 1] = rng end
+    else
+        for _, d in ipairs(bp:GetDescendants()) do
+            if d:IsA("BasePart") then list[#list + 1] = d end
+        end
+    end
+    for _, part in ipairs(list) do
+        pcall(firetouchinterest, part, hrp, 0)
+    end
+    return #list > 0
 end
 
 local function goArena()
     local map = workspace:FindFirstChild("Map")
     local bp = map and map:FindFirstChild("BattleArenaPortal")
     if not bp then return false end
-    local tel = bp:FindFirstChild("Teleporter")
-    if not tel then
-        local portal = bp:FindFirstChild("Portal")
-        tel = portal and portal:FindFirstChild("Teleporter")
-    end
+    local tel = portalTrigger(bp)
     local target
-    if tel and tel:IsA("BasePart") then
+    if tel then
         target = tel.Position + Vector3.new(0, 3, 0)
     else
         local sum, n = Vector3.zero, 0
@@ -280,30 +319,37 @@ local function goArena()
         end
         if n == 0 then return false end
         target = sum / n
-        tel = nil
     end
     local _, _, hrp = char()
-    if hrp then
-        pcall(function() hrp.Anchored = false end)
-        hrp.CFrame = CFrame.new(target)
-        task.wait(0.15)
-        pcall(function() hrp.CFrame = CFrame.new(target) end)
-        if firetouchinterest then
-            if tel then
-                pcall(firetouchinterest, tel, hrp, 0)
-                local rng = tel:FindFirstChild("Range")
-                if rng and rng:IsA("BasePart") then pcall(firetouchinterest, rng, hrp, 0) end
-            else
-                for _, d in ipairs(bp:GetDescendants()) do
-                    if d:IsA("BasePart") then
-                        pcall(firetouchinterest, d, hrp, 0)
-                        pcall(firetouchinterest, d, hrp, 1)
-                    end
-                end
-            end
-        end
-    end
+    if not hrp then return false end
+    pcall(function() hrp.Anchored = false end)
+    hrp.CFrame = CFrame.new(target)
+    task.wait(0.15)
+    pcall(function() hrp.CFrame = CFrame.new(target) end)
+    touchPortal(bp)
     return true
+end
+
+local function untilTrue(delay, fn)
+    while not Window.unloaded do
+        if pcall(fn) then return true end
+        task.wait(delay or 0.1)
+    end
+    return false
+end
+
+local function hopShrine()
+    local shrine = workspace:FindFirstChild("VO!D $HR1NE")
+    local part = shrine and shrine:FindFirstChild("VoidShrinePrompt")
+    if not part then return false end
+    return untilTrue(0.08, function()
+        local _, _, hrp = char()
+        if not hrp then return false end
+        if (hrp.Position - part.Position).Magnitude <= 15 then return true end
+        pcall(function() hrp.Anchored = false end)
+        hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+        return false
+    end)
 end
 
 local function doSacrifice()
@@ -329,14 +375,19 @@ local function doSacrifice()
     end
 
     local _, _, hrp = char()
+    local moved = false
     if hrp then
-        pcall(function() hrp.Anchored = false end)
-        hrp.CFrame = part.CFrame
-        task.wait(0.2)
+        local far = (hrp.Position - part.Position).Magnitude > 12
+        if far then
+            pcall(function() hrp.Anchored = false end)
+            hrp.CFrame = part.CFrame
+            task.wait(0.12)
+            moved = true
+        end
     end
 
     local livePart, livePrompt
-    for _ = 1, 3 do
+    while not Window.unloaded do
         livePart = shrine and shrine:FindFirstChild("VoidShrinePrompt")
         livePrompt = livePart and livePart:FindFirstChildOfClass("ProximityPrompt")
         if livePrompt then break end
@@ -345,8 +396,9 @@ local function doSacrifice()
             pcall(function() r.Anchored = false end)
             r.CFrame = CFrame.new(part.Position + Vector3.new(0, 40, 0))
         end
-        task.wait(0.4)
+        task.wait(0.2)
     end
+    local cutStart = 0
     if livePrompt then
         livePart = livePart or part
         local _, _, r = char()
@@ -361,7 +413,7 @@ local function doSacrifice()
         if r and livePart then
             pcall(function() r.Anchored = false end)
             r.CFrame = livePart.CFrame
-            task.wait(0.15)
+            task.wait(0.1)
             pcall(function() r.Anchored = false end)
         end
         pcall(function()
@@ -372,42 +424,40 @@ local function doSacrifice()
         end)
         pcall(fireproximityprompt, livePrompt)
 
-        local cutStart = os.clock()
-        for _ = 1, 4 do
-            local hit = false
-            local t0 = os.clock()
-            while os.clock() - t0 < 0.7 do
-                task.wait(0.05)
-                if cutsceneAt > cutStart or voidShards() > before then hit = true; break end
-            end
-            if hit then break end
+        cutStart = os.clock()
+        while not Window.unloaded do
+            if cutsceneAt > cutStart or voidShards() > before then break end
             local _, _, r2 = char()
             if not r2 then break end
             pcall(function() r2.Anchored = false end)
             r2.CFrame = CFrame.new(part.Position + Vector3.new(0, 40, 0))
-            task.wait(0.35)
+            task.wait(0.2)
             local freshPart = shrine and shrine:FindFirstChild("VoidShrinePrompt")
             local freshPrompt = freshPart and freshPart:FindFirstChildOfClass("ProximityPrompt")
-            if not (freshPart and freshPrompt) then continue end
-            r2.CFrame = freshPart.CFrame
+            if freshPart and freshPrompt then
+                r2.CFrame = freshPart.CFrame
+                task.wait(0.1)
+                pcall(function()
+                    freshPrompt.Enabled = true
+                    freshPrompt.RequiresLineOfSight = false
+                    freshPrompt.MaxActivationDistance = 100
+                    freshPrompt.HoldDuration = 0
+                end)
+                pcall(fireproximityprompt, freshPrompt)
+            end
+            if cutsceneAt > cutStart or voidShards() > before then break end
             task.wait(0.15)
-            pcall(function()
-                freshPrompt.Enabled = true
-                freshPrompt.RequiresLineOfSight = false
-                freshPrompt.MaxActivationDistance = 100
-                freshPrompt.HoldDuration = 0
-            end)
-            pcall(fireproximityprompt, freshPrompt)
         end
     end
 
-    local after = before
-    for _ = 1, 10 do
-        task.wait(0.1)
-        after = voidShards()
-        if after > before then break end
+    local after = voidShards()
+    if after > before then
+        return true, string.format("%s -> %s", tostring(before), tostring(after))
     end
-    return after > before, string.format("%s -> %s", tostring(before), tostring(after))
+    if cutStart > 0 and cutsceneAt > cutStart then
+        return true, "cutscene fired"
+    end
+    return false, string.format("%s -> %s", tostring(before), tostring(after))
 end
 local ARENA_MIN_Y = 1000
 local ARENA_MAX_Y = 1700
@@ -493,7 +543,7 @@ local function hitAll()
     return n
 end
 
-local function arenaOk()
+arenaOk = function()
     local _, hum, hrp = char()
     if not hum or not hrp or hum.Health <= 0 then return false, 0 end
     local y = hrp.Position.Y
@@ -539,13 +589,11 @@ local function equipPickaxe()
         local cd = hb:FindFirstChildOfClass("ClickDetector")
         if cd then pcall(fireclickdetector, cd, 0, "MouseClick") end
     end
-    for _ = 1, 30 do
-        task.wait(0.03)
+    return untilTrue(0.03, function()
         ensurePickaxe()
         local c2 = LP.Character
-        if c2 and c2:FindFirstChild("Celestial Pickaxe") then return true end
-    end
-    return false
+        return c2 ~= nil and c2:FindFirstChild("Celestial Pickaxe") ~= nil
+    end)
 end
 local function mineAll()
     local cm = game:GetService("ReplicatedStorage"):FindFirstChild("CelestialMining")
@@ -606,7 +654,7 @@ local function mineAll()
 end
 
 
-local Window = Rayfield:CreateWindow({
+Window = Rayfield:CreateWindow({
     name = "Y7 Hub",
     configuration = { autoSave = false, autoLoad = false, forgetState = true },
 })
@@ -704,56 +752,6 @@ Mining:CreateToggle({
 
 
 task.spawn(function()
-    local lastArena = 0
-    while not Window.unloaded do
-        task.wait(0.2)
-        if not S.autoMine or S.enabled or S.busy then
-            miningChar = nil
-            continue
-        end
-        local ch, hum = char()
-        if not ch or not hum or hum.Health <= 0 then
-            miningChar = nil
-            continue
-        end
-        if miningChar ~= ch or not ch:FindFirstChild("Celestial Pickaxe") then
-            if os.clock() - lastArena > 2 then
-                lastArena = os.clock()
-                S.busy = true
-                if not ch:FindFirstChild("Celestial Pickaxe") then equipPickaxe() end
-                goArena()
-                task.wait(0.5)
-                ensurePickaxe()
-                S.busy = false
-            end
-            miningChar = ch
-            continue
-        end
-        applyProtection()
-        if hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
-        local ok = pcall(mineAll)
-        if not ok then
-            miningChar = nil
-            S.busy = false
-        end
-        if os.clock() - lastMineActivity > 12 then
-            miningChar = nil
-            S.busy = false
-            local _, _, hr = char()
-            if hr then pcall(function() hr.Anchored = false end) end
-            task.spawn(function()
-                equipPickaxe()
-                goArena()
-                task.wait(0.4)
-                ensurePickaxe()
-            end)
-            lastMineActivity = os.clock()
-        end
-    end
-end)
-
-
-task.spawn(function()
     local uiAt = 0
     local healAt = 0
     local armedChar = nil
@@ -798,27 +796,32 @@ task.spawn(function()
         end
 
         if not S.armed then
-            if not isEquipped() then
+            if not isEquipped() and not hasTool() then
                 S.busy = true
                 pcall(function() status:Set("equipping " .. S.sword) end)
                 local ok = equipSword()
                 S.busy = false
                 if not ok then
                     pcall(function() status:Set("equip failed, retrying") end)
-                    task.wait(0.3)
+                    task.wait(0.2)
                 end
                 continue
             end
             S.busy = true
             pcall(function() status:Set("entering arena") end)
-            goArena()
-            for _ = 1, 80 do
+            if not arenaOk() then untilTrue(0.4, function() goArena() return arenaOk() end) end
+            local toolAt = os.clock()
+            untilTrue(0.05, function()
                 ensureTool(true)
-                if hasTool() then break end
-                task.wait(0.05)
-            end
+                if hasTool() then return true end
+                if os.clock() - toolAt > 2 then
+                    toolAt = os.clock()
+                    goArena()
+                end
+                return false
+            end)
             if hasTool() then
-                task.wait(0.15)
+                hopShrine()
                 armedChar = LP.Character
                 S.startKills = sacKills()
                 S.armed = true
@@ -842,7 +845,7 @@ task.spawn(function()
             weaponCache = { char = nil, tool = nil, parts = nil }
             npcCache.containers = nil
             pcall(function() status:Set("not in arena, re-entering") end)
-            pcall(goArena)
+            untilTrue(0.4, function() goArena() return arenaOk() end)
             continue
         end
 
@@ -882,7 +885,7 @@ task.spawn(function()
                 armedChar = nil
                 weaponCache = { char = nil, tool = nil, parts = nil }
                 npcCache.containers = nil
-                pcall(goArena)
+                untilTrue(0.4, function() goArena() return arenaOk() end)
                 continue
             end
         end
@@ -900,11 +903,10 @@ task.spawn(function()
         if gained >= target then
             S.busy = true
             pcall(function() status:Set("sacrificing") end)
-            local ok, detail = doSacrifice()
             local changed = false
             local cn = LP.CharacterAdded:Once(function() changed = true end)
-            local t0 = os.clock()
-            while not changed and os.clock() - t0 < 10 do task.wait(0.2) end
+            local ok, detail = doSacrifice()
+            while not changed and not Window.unloaded do task.wait(0.1) end
             pcall(function() cn:Disconnect() end)
             S.armed = false
             S.startKills = 0
@@ -913,7 +915,7 @@ task.spawn(function()
             pcall(function() progress:Set(0) end)
             if not (ok or changed) then
                 pcall(function() status:Set("sacrifice failed, retrying") end)
-                task.wait(1)
+                task.wait(0.2)
             end
             S.busy = false
             arenaLostAt = os.clock()
@@ -941,7 +943,7 @@ task.spawn(function()
                 arenaAt = os.clock()
                 weaponCache = { char = nil, tool = nil, parts = nil }
                 npcCache.containers = nil
-                pcall(goArena)
+                untilTrue(0.4, function() goArena() return arenaOk() end)
             end
             continue
         end
