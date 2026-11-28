@@ -15,6 +15,7 @@ local S = {
     autoMine = false,
     killFarm = false,
     mineAstral = false,
+    astralOnly = false,
     resetOnSacrifice = true,
     startKills = 0,
 }
@@ -635,7 +636,8 @@ local function mineAll()
         local oreName = tostring(st:GetAttribute("Ore") or "")
         local oreMax = tonumber(st:GetAttribute("MaxHealth")) or 0
         local astral = st:GetAttribute("Astral") == true or oreMax >= 1000 or oreName:find("Astral") ~= nil or oreName:find("Cosmaline") ~= nil or oreName:find("Starsteel") ~= nil or oreName:find("Galaxine") ~= nil
-        if astral and not S.mineAstral then continue end
+        if S.astralOnly and not astral then continue end
+        if astral and not S.mineAstral and not S.astralOnly then continue end
         if st:GetAttribute("Alive") == true and (stoneSkipUntil[st] or 0) <= os.clock() then
             local cf = st:GetAttribute("CFrame")
             if typeof(cf) == "CFrame" then
@@ -776,6 +778,14 @@ Mining:CreateToggle({
     value = false,
     callback = function(v)
         S.mineAstral = v
+    end,
+})
+Mining:CreateToggle({
+    name = "astral only mode",
+    flag = "AstralOnly",
+    value = false,
+    callback = function(v)
+        S.astralOnly = v
     end,
 })
 Mining:CreateToggle({
