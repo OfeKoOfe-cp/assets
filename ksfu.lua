@@ -621,6 +621,8 @@ local function equipPickaxe()
     end
     return ensurePickaxe()
 end
+local stoneSkipUntil = {}
+
 local function mineAll()
     local cm = game:GetService("ReplicatedStorage"):FindFirstChild("CelestialMining")
     local remote = cm and cm:FindFirstChild("MineHit")
@@ -629,20 +631,21 @@ local function mineAll()
     ensurePickaxe()
     local mined = 0
     for _, st in ipairs(stones:GetChildren()) do
-        if not S.autoMine then break end
+        if not S.autoMine or Window.unloaded then break end
         local oreName = tostring(st:GetAttribute("Ore") or "")
         local oreMax = tonumber(st:GetAttribute("MaxHealth")) or 0
-        local astral = oreMax >= 1000 or oreName:find("Astral") ~= nil or oreName:find("Cosmaline") ~= nil or oreName:find("Starsteel") ~= nil or oreName:find("Galaxine") ~= nil
+        local astral = st:GetAttribute("Astral") == true or oreMax >= 1000 or oreName:find("Astral") ~= nil or oreName:find("Cosmaline") ~= nil or oreName:find("Starsteel") ~= nil or oreName:find("Galaxine") ~= nil
         if astral and not S.mineAstral then continue end
-        if st:GetAttribute("Alive") == true then
+        if st:GetAttribute("Alive") == true and (stoneSkipUntil[st] or 0) <= os.clock() then
             local cf = st:GetAttribute("CFrame")
             if typeof(cf) == "CFrame" then
-                local _, _, hrp = char()
+                local cNow, _, hrp = char()
                 if hrp then
-                    local anchor = cf.Position + Vector3.new(0, -6, 0)
+                    if not cNow:FindFirstChild("Celestial Pickaxe") then ensurePickaxe() end
+                    local anchor = cf.Position + Vector3.new(0, -4, 0)
                     pcall(function() hrp.Anchored = false end)
                     hrp.CFrame = CFrame.new(anchor)
-                    task.wait(0.12)
+                    task.wait(0.06)
                     pcall(function() hrp.Anchored = true end)
                     local maxHp = tonumber(st:GetAttribute("MaxHealth")) or 100
                     local lastHp = tonumber(st:GetAttribute("Health")) or maxHp
@@ -650,28 +653,35 @@ local function mineAll()
                     local lastSync = os.clock()
                     local started = os.clock()
                     local fired = 0
-                    while S.autoMine and st:GetAttribute("Alive") == true and os.clock() - started < 90 do
+                    local timedOut = false
+                    while S.autoMine and not Window.unloaded and st:GetAttribute("Alive") == true do
+                        if os.clock() - started > 30 then timedOut = true; break end
+                        local c2, h2, r2 = char()
+                        if not c2 or not h2 or h2.Health <= 0 or not r2 then break end
+                        if not c2:FindFirstChild("Celestial Pickaxe") then ensurePickaxe() end
                         local hp = tonumber(st:GetAttribute("Health")) or 0
                         if hp < lastHp then
                             lastHp = hp
                             lastDrop = os.clock()
                         end
                         if hp <= 0 then break end
-                        if os.clock() - lastDrop > 15 then break end
-                        if os.clock() - lastSync > 2 then
-                            hrp.CFrame = CFrame.new(anchor)
+                        if os.clock() - lastDrop > 1.2 then timedOut = true; break end
+                        if os.clock() - lastSync > 1.5 then
+                            r2.CFrame = CFrame.new(anchor)
                             lastSync = os.clock()
                         end
                         pcall(function() remote:FireServer(st.Name) end)
                         mined += 1
                         lastMineActivity = os.clock()
                         fired += 1
-                        if fired % 8 == 0 then
-                            hrp.CFrame = CFrame.new(anchor)
+                        if fired % 3 == 0 then
+                            r2.CFrame = CFrame.new(anchor)
                             task.wait()
                         end
                     end
-                    pcall(function() hrp.Anchored = false end)
+                    if timedOut then stoneSkipUntil[st] = os.clock() + 8 end
+                    local _, _, rEnd = char()
+                    if rEnd then pcall(function() rEnd.Anchored = false end) end
                 end
             end
         end
@@ -793,7 +803,7 @@ task.spawn(function()
             miningChar = nil
             continue
         end
-        if not arenaOk() then
+        if not arenaOk() and not ensurePickaxe() then
             goArena()
             local deadline = os.clock() + 3.0
             while os.clock() < deadline and S.autoMine and not Window.unloaded do
