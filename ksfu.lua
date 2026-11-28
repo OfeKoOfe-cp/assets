@@ -644,15 +644,16 @@ local function mineAll()
                 local cNow, _, hrp = char()
                 if hrp then
                     if not cNow:FindFirstChild("Celestial Pickaxe") then ensurePickaxe() end
-                    local anchor = cf.Position + Vector3.new(0, -4, 0)
-                    pcall(function() hrp.Anchored = false end)
-                    hrp.CFrame = CFrame.new(anchor)
-                    task.wait(0.06)
-                    pcall(function() hrp.Anchored = true end)
+                    local anchor = cf.Position + Vector3.new(0, -5.5, 0)
+                    pcall(function()
+                        hrp.Anchored = false
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.CFrame = CFrame.new(anchor)
+                    end)
+                    task.wait(0.05)
                     local maxHp = tonumber(st:GetAttribute("MaxHealth")) or 100
                     local lastHp = tonumber(st:GetAttribute("Health")) or maxHp
                     local lastDrop = os.clock()
-                    local lastSync = os.clock()
                     local started = os.clock()
                     local fired = 0
                     local timedOut = false
@@ -668,22 +669,19 @@ local function mineAll()
                         end
                         if hp <= 0 then break end
                         if os.clock() - lastDrop > 1.2 then timedOut = true; break end
-                        if os.clock() - lastSync > 1.5 then
+                        pcall(function()
+                            r2.AssemblyLinearVelocity = Vector3.zero
                             r2.CFrame = CFrame.new(anchor)
-                            lastSync = os.clock()
-                        end
+                        end)
                         pcall(function() remote:FireServer(st.Name) end)
                         mined += 1
                         lastMineActivity = os.clock()
                         fired += 1
                         if fired % 3 == 0 then
-                            r2.CFrame = CFrame.new(anchor)
                             task.wait()
                         end
                     end
                     if timedOut then stoneSkipUntil[st] = os.clock() + 8 end
-                    local _, _, rEnd = char()
-                    if rEnd then pcall(function() rEnd.Anchored = false end) end
                 end
             end
         end
