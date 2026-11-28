@@ -15,6 +15,7 @@ local S = {
     autoMine = false,
     killFarm = false,
     mineAstral = false,
+    resetOnSacrifice = true,
     startKills = 0,
 }
 
@@ -41,7 +42,7 @@ pcall(function()
     end)
 end)
 
-local SHARD_RULES = { APOTHESIS = 5e7, DARKSTAR = 9e8, CURSE = 5e10 }
+local SHARD_RULES = { APOTHESIS = 5e7, DARKSTAR = 1e9, CURSE = 5e10 }
 local STAND_MODEL = { APOTHESIS = "Apothesis", DARKSTAR = "DarkStar", CURSE = "CURSE" }
 local LB_SWORD = { APOTHESIS = "Apotheosis", DARKSTAR = "DarkStar", CURSE = "Curse" }
 
@@ -425,6 +426,13 @@ local function doSacrifice()
         pcall(fireproximityprompt, livePrompt)
 
         cutStart = os.clock()
+        local waitEnd = os.clock() + 0.8
+        while os.clock() < waitEnd and not Window.unloaded do
+            if cutsceneAt > cutStart or voidShards() > before then break end
+            local _, humNow = char()
+            if not humNow or humNow.Health <= 0 then break end
+            task.wait()
+        end
         while not Window.unloaded do
             if cutsceneAt > cutStart or voidShards() > before then break end
             local _, _, r2 = char()
@@ -697,6 +705,13 @@ Main:CreateToggle({
 
 local progress
 
+Main:CreateToggle({
+    name = "reset on sacrifice cutscene",
+    flag = "ResetOnSac",
+    value = true,
+    callback = function(v) S.resetOnSacrifice = v end,
+})
+
 Main:CreateDropdown({
     name = "sword",
     flag = "Sword",
@@ -926,7 +941,14 @@ task.spawn(function()
             local changed = false
             local cn = LP.CharacterAdded:Once(function() changed = true end)
             local ok, detail = doSacrifice()
-            while not changed and not Window.unloaded do task.wait(0.1) end
+            if ok and S.resetOnSacrifice and not changed then
+                local lc = game:GetService("ReplicatedStorage"):FindFirstChild("LoadCharacter")
+                if lc and lc:IsA("RemoteEvent") then pcall(function() lc:FireServer() end) end
+                local chNow, humNow = char()
+                if humNow and humNow.Health > 0 then pcall(function() humNow.Health = 0 end) end
+                if chNow then pcall(function() chNow:BreakJoints() end) end
+            end
+            while not changed and not Window.unloaded do task.wait() end
             pcall(function() cn:Disconnect() end)
             S.armed = false
             S.startKills = 0
