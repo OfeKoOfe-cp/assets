@@ -588,40 +588,38 @@ end
 
 local function ensurePickaxe()
     local ch = LP.Character
-    if not ch then return end
-    if ch:FindFirstChild("Celestial Pickaxe") then return end
+    if not ch then return false end
+    if ch:FindFirstChild("Celestial Pickaxe") then return true end
     local bp = LP:FindFirstChild("Backpack")
     local pick = bp and bp:FindFirstChild("Celestial Pickaxe")
     if pick then
-        pcall(function() pick.Parent = ch end)
         local humEq = ch:FindFirstChildOfClass("Humanoid")
-        if humEq then pcall(function() humEq:EquipTool(pick) end) end
+        if humEq then
+            pcall(function() humEq:EquipTool(pick) end)
+        else
+            pcall(function() pick.Parent = ch end)
+        end
+        return ch:FindFirstChild("Celestial Pickaxe") ~= nil
     end
+    return false
 end
 
 local function equipPickaxe()
-    local ch = LP.Character
-    if not ch then return false end
-    if ch:FindFirstChild("Celestial Pickaxe") then return true end
+    if ensurePickaxe() then return true end
     local map = workspace:FindFirstChild("Map")
     local f = map and map:FindFirstChild("Sword Stands")
     local m = f and f:FindFirstChild("Celestial Pickaxe")
-    local hb = m and m:FindFirstChild("Hitbox")
-    if hb and hb:IsA("BasePart") then
-        local _, _, hrp = char()
-        if hrp then
-            pcall(function() hrp.Anchored = false end)
-            hrp.CFrame = CFrame.new(hb.Position + Vector3.new(0, 3, 0))
-        end
-        task.wait(0.12)
-        local cd = hb:FindFirstChildOfClass("ClickDetector")
-        if cd then pcall(fireclickdetector, cd, 0, "MouseClick") end
+    local hb = m and (m:FindFirstChild("Hitbox") or m:FindFirstChildWhichIsA("BasePart", true))
+    local cd = hb and (hb:FindFirstChildOfClass("ClickDetector") or m:FindFirstChildWhichIsA("ClickDetector", true))
+    if cd then
+        pcall(fireclickdetector, cd, 0, "MouseClick")
     end
-    return untilTrue(0.03, function()
-        ensurePickaxe()
-        local c2 = LP.Character
-        return c2 ~= nil and c2:FindFirstChild("Celestial Pickaxe") ~= nil
-    end)
+    local deadline = os.clock() + 0.8
+    while os.clock() < deadline and not Window.unloaded do
+        if ensurePickaxe() then return true end
+        task.wait(0.08)
+    end
+    return ensurePickaxe()
 end
 local function mineAll()
     local cm = game:GetService("ReplicatedStorage"):FindFirstChild("CelestialMining")
@@ -776,14 +774,43 @@ Mining:CreateToggle({
     value = false,
     callback = function(v)
         S.autoMine = v
-        if v then
-            task.spawn(equipPickaxe)
-        else
+        if not v then
             local _, _, hrp = char()
             if hrp then pcall(function() hrp.Anchored = false end) end
         end
     end,
 })
+
+task.spawn(function()
+    while not Window.unloaded do
+        task.wait(0.1)
+        if not S.autoMine or S.enabled or S.busy then
+            miningChar = nil
+            continue
+        end
+        local ch, hum = char()
+        if not ch or not hum or hum.Health <= 0 then
+            miningChar = nil
+            continue
+        end
+        if not arenaOk() then
+            goArena()
+            local deadline = os.clock() + 3.0
+            while os.clock() < deadline and S.autoMine and not Window.unloaded do
+                if arenaOk() then break end
+                task.wait(0.05)
+            end
+            if not arenaOk() then continue end
+        end
+        if miningChar ~= ch or not ensurePickaxe() then
+            miningChar = ch
+            equipPickaxe()
+        end
+        applyProtection()
+        if hum.Health < hum.MaxHealth then pcall(function() hum.Health = hum.MaxHealth end) end
+        pcall(mineAll)
+    end
+end)
 
 
 task.spawn(function()
